@@ -58,6 +58,39 @@ as-is; this file tracks what we actually decided and built in response.
    (2026-08-15), so from this point on we commit as each meaningful chunk of
    work lands rather than batching everything into one commit.
 
+10. **Task 5 built as a subclass of pi05, not an edit to the vendored submodule.**
+    `src/viktr/policy/pi05_context.py` (`VictrPI05`, `VictrPolicy`) subclasses
+    `PI05Pytorch`/`PI05Policy` and composes on top of `embed_prefix` rather than
+    editing `third_party/lerobot/.../modeling_pi05.py` in place. Reasons: (a)
+    keeps the submodule a clean, diffable upstream checkout that's easy to bump
+    later; (b) `embed_prefix` already does everything a context block needs
+    (SigLIP image embedding + tokenized text, concatenated with block-boundary
+    attention flags) — reusing it per chunk avoids re-deriving that logic.
+    Context blocks are ordered farthest-to-nearest and prepended to the query's
+    own prefix, each starting a fresh causal block (`att_masks[:, 0] = True`)
+    and tagged with a learned `neighbor_rank_embedding` added to every token in
+    that block. Net effect under pi05's existing block-causal mask
+    (`make_att_2d_masks`): each chunk sees itself + every chunk before it, the
+    query prefix sees every chunk, the query's action-expert suffix sees
+    everything, and no chunk ever sees the query (see the module docstring for
+    the full argument). `forward`/`sample_actions` are full overrides (not
+    monkey-patches) that duplicate the small amount of surrounding plumbing
+    from the base class so there's one linear code path to read.
+11. **Retrieved chunks are described to the model as text, not just images.**
+    Each chunk block is `K` subsampled frames (`linspace`, matching Robometer's
+    convention) embedded through the same SigLIP tower as the query's own
+    images, *plus* a "Task: …, State: …; Action: …" text summary using pi05's
+    own 256-bin digitization convention (`Pi05PrepareStateTokenizerProcessorStep`)
+    applied to the chunk's first-frame proprio and a subsampled action
+    sequence. This lets the model read what the retrieved chunk *did*
+    (its actions), not just what it *looked like* — closer to genuine
+    in-context conditioning than image similarity alone. Known gap: chunk
+    proprio/actions are clipped to `[-1, 1]` assuming they're already
+    normalized the way the base model's own `observation.state` is; nothing
+    in the current wiring actually normalizes them first (they come straight
+    from `viktr.data.libero` in raw dataset units). Fine for a forward-pass
+    smoke test; needs real normalization stats wired through before training.
+
 ## Repo layout (current)
 
 ```
@@ -78,11 +111,14 @@ viktr/
       annotate.py                  # offline per-episode value annotation
     data/
       libero.py                    # lerobot/libero HF dataset -> per-episode array adapter
-    policy/                        # empty so far — task 5
+    policy/
+      configuration_victr.py       # VictrConfig(PI05Config): num_context_chunks, context_chunk_size, etc.
+      pi05_context.py              # VictrPI05(PI05Pytorch) / VictrPolicy(PI05Policy): context-chunk conditioning
   scripts/
     smoke_test_chunk_retrieval.py
     smoke_test_robometer.py
     smoke_test_fused_retrieval.py
+    smoke_test_victr_policy.py
   shells/                          # not yet created — task 7
   notes/
     explanation.md, vktr.pdf       # original problem statement / paper draft
@@ -114,7 +150,23 @@ viktr/
   estimator (`scripts/smoke_test_fused_retrieval.py`) so the wiring test
   doesn't depend on loading the (slow) real Robometer model.
 - **2026-08-15 — Repo committed to git** for the first time; this progress
-  doc added. Task 5 (context-conditioned IC-VLA) not yet started.
+  doc added.
+- **2026-08-15 — Task 5, context-conditioned IC-VLA.** `configuration_victr.py`
+  and `pi05_context.py` written (see design decisions #10, #11 above).
+  Verified end-to-end (`scripts/smoke_test_victr_policy.py`) against real
+  `lerobot/pi05_base` weights and real retrieved `lerobot/libero` data: loaded
+  the pretrained checkpoint with exactly one missing key
+  (`neighbor_rank_embedding.weight`, expected — it's new), retrieved the
+  vision-nearest chunk for a query frame, ran `predict_action_chunk` with that
+  chunk as context, got a correctly-shaped `(1, 50, 7)` action chunk, and
+  confirmed the context-conditioned output differs from a no-context call on
+  the same observation (context is actually influencing the prediction, not
+  silently dropped). Not yet validated: actual rollout quality (both the base
+  model and the new context-conditioning weights are untrained/zero-shot on
+  LIBERO right now — that's expected and is what task 6's training loop is
+  for), and the `forward()` (training-loss) path's context branch specifically
+  (it reuses the same `embed_prefix_with_context` machinery `sample_actions`
+  uses, so risk is low, but it hasn't been smoke-tested on its own).
 
 ## Known bugs fixed along the way (for context, not action items)
 
@@ -136,15 +188,7 @@ viktr/
 
 ## What's next
 
-- **Task 5 (not started, architecturally the hardest piece)**: extend
-  `third_party/lerobot/src/lerobot/policies/pi05/modeling_pi05.py` so
-  `PI05Policy` accepts `k` retrieved `Chunk`s as in-context conditioning —
-  neighbor blocks ordered nearest-to-farthest, each with a learned
-  neighbor-rank embedding, prepended to the query (paper Sec III-E). New file:
-  `src/viktr/policy/pi05_context.py`, plus `configuration_viktr.py` to wire
-  the retrieval-metric choice through config. First milestone: one LIBERO-100
-  forward pass + rollout with vision-only retrieval, before adding value.
-- **Task 6**: LIBERO-100 rollout/eval across all three retrieval-metric
+- **Task 6 (not started)**: LIBERO-100 rollout/eval across all three retrieval-metric
   variants (vision / value / vision+value) plus a no-retrieval baseline,
   10 rollouts/task on a small task subset, single PyTorch process.
 - **Task 7**: `shells/` — thin `.sh` wrappers per script for local runs, kept
