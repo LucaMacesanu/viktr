@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+*.egg-info/
+build/
+dist/
+
+# outputs / checkpoints / data — never commit (root-level only; src/viktr/data/ is source code)
+/outputs/
+/checkpoints/
+/data/
+wandb/
+*.log
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/
