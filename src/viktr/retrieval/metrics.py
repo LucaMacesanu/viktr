@@ -60,8 +60,11 @@ def fused_retrieve(
         raise ValueError("pool has no key_values; annotate it first (viktr.value.annotate)")
     d_vis = np.linalg.norm(pool.key_embeddings - query_embedding[None, :], axis=1)
     d_val = np.abs(pool.key_values - query_value)
+    device = next(fusion.parameters()).device
     with torch.no_grad():
-        scores = fusion(torch.from_numpy(d_vis).float(), torch.from_numpy(d_val).float()).numpy()
+        d_vis_t = torch.from_numpy(d_vis).float().to(device)
+        d_val_t = torch.from_numpy(d_val).float().to(device)
+        scores = fusion(d_vis_t, d_val_t).cpu().numpy()
     return _topk(scores, pool, k)
 
 

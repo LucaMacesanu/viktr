@@ -90,6 +90,21 @@ as-is; this file tracks what we actually decided and built in response.
     in the current wiring actually normalizes them first (they come straight
     from `viktr.data.libero` in raw dataset units). Fine for a forward-pass
     smoke test; needs real normalization stats wired through before training.
+12. **Task 6's eval harness drives `LiberoEnv` directly, unvectorized, instead
+    of going through `lerobot-eval`/`gym.vector`.** `lerobot-eval` resolves
+    policies by a hardcoded type-name switch that doesn't know about `"victr"`,
+    and its `rollout()` calls `policy.select_action(observation)` with no hook
+    for injecting retrieved context chunks per step. Since we need to retrieve
+    a fresh chunk at every action-chunk refill (not just pick an action), we
+    own the loop: `scripts/eval_libero_victr.py` builds one raw
+    `lerobot.envs.libero.LiberoEnv` per task (bypassing `create_libero_envs`'s
+    `gym.vector` wrapping), reuses lerobot's own `LiberoProcessorStep` /
+    `make_pi05_pre_post_processors` for observation formatting, and calls
+    `VictrPolicy.predict_action_chunk(..., context_chunks=...)` directly.
+    One `VictrPolicy` (loaded from `lerobot/pi05_base`), one DINOv2 embedder,
+    and (if needed) one `RobometerValueEstimator` are constructed once and
+    reused across every task/metric in a run, since reloading a 2B+300M-param
+    model per variant would dominate runtime.
 
 ## Repo layout (current)
 
@@ -119,6 +134,7 @@ viktr/
     smoke_test_robometer.py
     smoke_test_fused_retrieval.py
     smoke_test_victr_policy.py
+    eval_libero_victr.py          # task 6: closed-loop LIBERO rollout/eval harness
   shells/                          # not yet created — task 7
   notes/
     explanation.md, vktr.pdf       # original problem statement / paper draft
@@ -167,6 +183,41 @@ viktr/
   for), and the `forward()` (training-loss) path's context branch specifically
   (it reuses the same `embed_prefix_with_context` machinery `sample_actions`
   uses, so risk is low, but it hasn't been smoke-tested on its own).
+- **2026-08-17 — Task 6, LIBERO rollout/eval harness.** `scripts/eval_libero_victr.py`
+  written (see design decision #12 above): builds real LIBERO sim envs, a
+  per-task chunk pool from `lerobot/libero` demos, and drives closed-loop
+  rollouts calling `VictrPolicy.predict_action_chunk` with freshly retrieved
+  context at every action-chunk refill. All four variants — `vision`,
+  `value`, `vision+value`, and a `none` (no-retrieval) baseline — verified
+  running end-to-end on a real `libero_object` task-0 sim rollout without
+  crashing (short `--max-steps` smoke runs; 0% success is expected at this
+  horizon/without LIBERO finetuning, not a bug). Two real bugs found and
+  fixed along the way:
+  - `viktr/retrieval/metrics.py`'s `fused_retrieve` didn't move the
+    `d_vis`/`d_val` tensors onto the fusion module's device — worked in the
+    task-4 smoke test only because that fusion module happened to stay on
+    CPU; crashed here once `fusion` was moved to CUDA. Now moves both onto
+    `next(fusion.parameters()).device` before calling it.
+  - LIBERO's raw (unvectorized) `gym.Env.reset()`/`step()` return unbatched
+    leaf arrays, including inside the nested `robot_state` dict — but
+    `LiberoProcessorStep._quat2axisangle` requires its input already batched
+    and raises instead of adding the batch dim itself (unlike the final
+    concatenated state, which does get a `dim()==1: unsqueeze(0)` fallback).
+    Fixed by adding a local `_add_batch_dim` helper in the eval script that
+    recursively batches every leaf before handing the observation to
+    `preprocess_observation`/`LiberoProcessorStep`.
+  Not yet done: an actual scaled run (10 episodes/task across several tasks
+  and all four variants) to compare success rates — the harness supports it
+  via `--n-episodes`/`--task-ids`/`--retrieval-metrics`, but a real run is
+  slow (2B+300M-param model, up to ~280 sim steps/episode for libero_object)
+  and neither `pi05_base` nor the new context-conditioning weights are
+  LIBERO-finetuned yet, so success rates would be near zero regardless of
+  retrieval quality — that requires the training loop this harness doesn't
+  build (fine-tuning `VictrPolicy` on `lerobot/libero`, not just running it
+  zero-shot). A harmless `transformers` warning ("Kwargs passed to
+  `processor.__call__`...") prints repeatedly during tokenization; traced to
+  vendored lerobot processor code, not our code, and doesn't affect output —
+  left alone.
 
 ## Known bugs fixed along the way (for context, not action items)
 
@@ -188,11 +239,15 @@ viktr/
 
 ## What's next
 
-- **Task 6 (not started)**: LIBERO-100 rollout/eval across all three retrieval-metric
-  variants (vision / value / vision+value) plus a no-retrieval baseline,
-  10 rollouts/task on a small task subset, single PyTorch process.
-- **Task 7**: `shells/` — thin `.sh` wrappers per script for local runs, kept
-  relocatable for the eventual HPC/SLURM move.
+- **Task 7 (not started)**: `shells/` — thin `.sh` wrappers per script for
+  local runs, kept relocatable for the eventual HPC/SLURM move.
+- **Training loop (not started, not yet a numbered task)**: fine-tune
+  `VictrPolicy` on `lerobot/libero` (the `forward()` / loss path exists from
+  task 5 but has never been run in a training loop) — needed before a scaled
+  `eval_libero_victr.py` run would show anything but near-zero success rates.
+  This is also where the `vision+value` fusion MLP (`ValueFusionMLP`,
+  currently random-initialized) would actually get trained (paper Sec III-G:
+  jointly with the IC-VLA via soft top-k).
 - **Deferred, post-MVP**: port to the real bimanual dataset; compare against
   ICRT (`projects/icl_baselines/icrt`) and RECAP/TOPReward/SARM
   (`projects/value-estimation`) baselines.
