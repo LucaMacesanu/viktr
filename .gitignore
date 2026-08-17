@@ -10,6 +10,7 @@ dist/
 /outputs/
 /checkpoints/
 /data/
+/logs/
 wandb/
 *.log
 

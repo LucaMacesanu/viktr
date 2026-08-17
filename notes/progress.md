@@ -135,10 +135,13 @@ viktr/
     smoke_test_fused_retrieval.py
     smoke_test_victr_policy.py
     eval_libero_victr.py          # task 6: closed-loop LIBERO rollout/eval harness
-  shells/                          # not yet created — task 7
+  shells/                          # task 7: .sh wrappers per script + SLURM templates
+    _common.sh, smoke_*.sh, eval_libero.sh
+    slurm/run.slurm.sh, slurm/eval_libero_array.slurm.sh
   notes/
     explanation.md, vktr.pdf       # original problem statement / paper draft
     progress.md                    # this file
+    hpc.md                        # task 7: HPC migration writeup
 ```
 
 ## Milestones / progress log
@@ -218,6 +221,32 @@ viktr/
   `processor.__call__`...") prints repeatedly during tokenization; traced to
   vendored lerobot processor code, not our code, and doesn't affect output —
   left alone.
+- **2026-08-17 — Task 7, `shells/` + HPC readiness.** Added one `.sh` wrapper
+  per `scripts/*.py` entrypoint (`shells/smoke_*.sh`, `shells/eval_libero.sh`),
+  all sourcing a shared `shells/_common.sh` that resolves the repo root from
+  the wrapper's own path (not the caller's cwd) and cds there before `uv run`
+  — verified this actually matters by running `shells/smoke_chunk_retrieval.sh`
+  and `shells/eval_libero.sh` from `/tmp`, both worked. Added
+  `shells/slurm/run.slurm.sh` (generic launcher: `sbatch
+  shells/slurm/run.slurm.sh <wrapper> [args...]`) and
+  `shells/slurm/eval_libero_array.slurm.sh` (one LIBERO task id per array
+  index, for the still-pending scaled eval run). Cluster-specific `#SBATCH`
+  fields (`partition`, `account`) are left as `TODO_*` placeholders since no
+  target cluster was specified. Wrote `notes/hpc.md`: documents that
+  `src`/`scripts` already have zero hardcoded absolute paths (checked via
+  grep), how to clone-with-submodules and `uv sync` on a fresh checkout, and
+  the one real cache-relocation gotcha found while writing it — `HF_HOME`
+  (currently 155GB on this dev machine: pi05/Robometer weights +
+  `lerobot/libero` dataset) is env-overridable and should point at
+  scratch/project storage on a cluster, but LIBERO's own asset cache
+  (~400MB) is hardcoded to `~/.cache/libero/assets` by `hf_libero` with no
+  env var override — that one stays on `$HOME` regardless. Also noted no
+  VRAM lower bound has been measured (only tested on a 98GB card with ~21GB
+  already in use by other processes) and multi-GPU/multi-node is untested
+  and unsupported by the current single-process eval script.
+  `shells/README.md` documents the wrapper/template list. Root `README.md`
+  (previously empty) now gives a repo overview pointing at `notes/progress.md`
+  and `notes/hpc.md`.
 
 ## Known bugs fixed along the way (for context, not action items)
 
@@ -239,8 +268,6 @@ viktr/
 
 ## What's next
 
-- **Task 7 (not started)**: `shells/` — thin `.sh` wrappers per script for
-  local runs, kept relocatable for the eventual HPC/SLURM move.
 - **Training loop (not started, not yet a numbered task)**: fine-tune
   `VictrPolicy` on `lerobot/libero` (the `forward()` / loss path exists from
   task 5 but has never been run in a training loop) — needed before a scaled
