@@ -14,6 +14,9 @@ dist/
 wandb/
 *.log
 
+# cluster/account-specific SLURM config — copy from cluster.conf.example
+/shells/slurm/cluster.conf
+
 # editors / os
 .DS_Store
 .idea/

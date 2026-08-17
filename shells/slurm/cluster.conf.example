@@ -1,0 +1,24 @@
+# Copy this file to cluster.conf (same directory) and fill in for your
+# allocation. cluster.conf itself is gitignored — never committed, since
+# partition/account strings are specific to whoever's running this and to
+# which cluster.
+#
+# Read by shells/slurm/submit.sh, which passes SLURM_PARTITION/SLURM_ACCOUNT/
+# SLURM_GRES to `sbatch` on the command line (SLURM directives are parsed
+# from the job script itself before any shell code runs, so they can't be
+# sourced from a file at submit time — this is the workaround). The job
+# scripts under shells/slurm/*.slurm.sh also source this file directly for
+# SCRATCH_DIR, which is real runtime shell code.
+
+# Required.
+SLURM_PARTITION=
+SLURM_ACCOUNT=
+
+# Optional — defaults shown.
+SLURM_GRES=gpu:1
+
+# Where large caches (HF_HOME) should live instead of $HOME. See notes/hpc.md
+# for why — $HOME is often small-quota/network-mounted on HPC, and HF_HOME
+# alone (pi05/Robometer weights + lerobot/libero dataset) was 155GB on the
+# dev machine this was built on.
+SCRATCH_DIR=/scratch/$USER

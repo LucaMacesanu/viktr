@@ -70,21 +70,31 @@ shells/eval_libero.sh --suite libero_object --task-ids 0 --n-episodes 2 \
     --retrieval-metrics vision,none
 ```
 
-Via SLURM, generic wrapper launcher:
+Via SLURM: first set up `cluster.conf` once per cluster/allocation (this is
+where partition/account/scratch-dir live — kept out of the job scripts
+themselves since `#SBATCH` directives are parsed from the script before any
+shell code runs, so they can't be sourced from a file):
 ```bash
-sbatch shells/slurm/run.slurm.sh shells/eval_libero.sh \
+cp shells/slurm/cluster.conf.example shells/slurm/cluster.conf
+# edit shells/slurm/cluster.conf
+```
+
+Then submit through `shells/slurm/submit.sh`, which reads `cluster.conf` and
+passes `--partition`/`--account`/`--gres` to `sbatch` on the command line:
+```bash
+# generic wrapper launcher
+shells/slurm/submit.sh shells/slurm/run.slurm.sh shells/eval_libero.sh \
     --suite libero_object --task-ids 0,1,2 --n-episodes 10 \
     --retrieval-metrics vision,value,vision+value,none \
     --output outputs/eval_libero_object.json
+
+# one task-id per array index (matches the "scaled eval run" noted as
+# not-yet-done in progress.md)
+shells/slurm/submit.sh --array=0-9 shells/slurm/eval_libero_array.slurm.sh libero_object
 ```
 
-Via SLURM, one task-id per array index (matches the "scaled eval run" noted
-as not-yet-done in `progress.md`):
-```bash
-sbatch --array=0-9 shells/slurm/eval_libero_array.slurm.sh libero_object
-```
-
-See `shells/README.md` for the full wrapper list and what each one takes.
+See `shells/README.md` for the full wrapper list, what each one takes, and
+what goes in `cluster.conf`.
 
 ## Explicitly not covered here
 
@@ -95,9 +105,9 @@ See `shells/README.md` for the full wrapper list and what each one takes.
   not just SLURM directives.
 - **Cluster-specific SLURM config** (partition names, account/QOS strings,
   module names for CUDA/Python, whether `/scratch/$USER` is the right
-  convention). Left as `TODO_PARTITION` / `TODO_ACCOUNT` placeholders in
-  `shells/slurm/*.slurm.sh` and a default-guessed `HF_HOME` path — fill in
-  once the actual target cluster is known.
+  convention). Lives in `shells/slurm/cluster.conf` (copy from
+  `cluster.conf.example`, gitignored) rather than in the job scripts — fill
+  in once the actual target cluster is known.
 - **Container/Apptainer packaging.** Not attempted; `uv sync` on the compute
   node is the only setup path documented here. If the target cluster
   requires containers instead of bare-metal module loads, that's a separate

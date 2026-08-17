@@ -227,12 +227,17 @@ viktr/
   the wrapper's own path (not the caller's cwd) and cds there before `uv run`
   — verified this actually matters by running `shells/smoke_chunk_retrieval.sh`
   and `shells/eval_libero.sh` from `/tmp`, both worked. Added
-  `shells/slurm/run.slurm.sh` (generic launcher: `sbatch
-  shells/slurm/run.slurm.sh <wrapper> [args...]`) and
+  `shells/slurm/run.slurm.sh` (generic launcher) and
   `shells/slurm/eval_libero_array.slurm.sh` (one LIBERO task id per array
-  index, for the still-pending scaled eval run). Cluster-specific `#SBATCH`
-  fields (`partition`, `account`) are left as `TODO_*` placeholders since no
-  target cluster was specified. Wrote `notes/hpc.md`: documents that
+  index, for the still-pending scaled eval run). Cluster-specific fields
+  (partition, account, scratch dir) are split into `shells/slurm/cluster.conf`
+  (gitignored, copied from committed `cluster.conf.example`) rather than
+  hardcoded into the job scripts — `#SBATCH` directives are parsed from the
+  script before any shell code runs, so they can't be sourced from a file at
+  submit time; `shells/slurm/submit.sh` works around this by reading
+  `cluster.conf` and passing `--partition`/`--account`/`--gres` to `sbatch`
+  on the command line, which override any conflicting in-script `#SBATCH`
+  line. Wrote `notes/hpc.md`: documents that
   `src`/`scripts` already have zero hardcoded absolute paths (checked via
   grep), how to clone-with-submodules and `uv sync` on a fresh checkout, and
   the one real cache-relocation gotcha found while writing it — `HF_HOME`

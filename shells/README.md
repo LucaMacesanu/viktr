@@ -30,11 +30,25 @@ shells/eval_libero.sh --suite libero_object --task-ids 0,1,2 --n-episodes 10 \
 ## slurm/
 
 SLURM job templates for the eventual HPC move — see `notes/hpc.md` for the
-full migration writeup. `#SBATCH` directives (partition, account) are
-placeholders (`TODO_...`) since they're specific to whatever allocation this
-project ends up running under; fill them in, or override at submission time
-with `sbatch --partition=... --account=...`.
+full migration writeup.
 
-- `run.slurm.sh` — generic: `sbatch shells/slurm/run.slurm.sh <wrapper> [args...]`
+Cluster/account-specific settings (partition, account, scratch dir) are kept
+out of the job scripts and live in `cluster.conf` instead, since `#SBATCH`
+directives are parsed straight from the job script before any shell code
+runs — they can't be sourced from a file. Setup, once per cluster/allocation:
+
+```bash
+cp shells/slurm/cluster.conf.example shells/slurm/cluster.conf
+# edit shells/slurm/cluster.conf — fill in SLURM_PARTITION, SLURM_ACCOUNT, etc.
+```
+
+`cluster.conf` is gitignored. Then submit jobs through `submit.sh`, which
+reads `cluster.conf` and passes `--partition`/`--account`/`--gres` to
+`sbatch` on the command line (these override any conflicting `#SBATCH` line
+in the job script itself):
+
+- `submit.sh` — `shells/slurm/submit.sh <job-script> [job-args...]`; any
+  leading `--` flags (e.g. `--array=0-9`) are forwarded to `sbatch`.
+- `run.slurm.sh` — generic launcher: `shells/slurm/submit.sh shells/slurm/run.slurm.sh <wrapper> [args...]`
 - `eval_libero_array.slurm.sh` — array template for the scaled eval sweep
-  (one LIBERO task id per array index): `sbatch --array=0-9 shells/slurm/eval_libero_array.slurm.sh libero_object`
+  (one LIBERO task id per array index): `shells/slurm/submit.sh --array=0-9 shells/slurm/eval_libero_array.slurm.sh libero_object`
