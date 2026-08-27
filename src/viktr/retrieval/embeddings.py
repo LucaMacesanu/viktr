@@ -33,6 +33,17 @@ def load_dinov2(device: str | None = None) -> torch.nn.Module:
     return _model_cache.to(device)
 
 
+def images_to_uint8_hwc(images: torch.Tensor) -> np.ndarray:
+    """(B, C, H, W) torch tensor (uint8 or float [0, 1]) -> (B, H, W, C) uint8 numpy,
+    the format embed_frames expects. Used to convert a raw dataloader batch's image
+    tensor (before the policy's own preprocessor normalizes/reshapes it) into DINOv2
+    retrieval-query input."""
+    arr = images.permute(0, 2, 3, 1).cpu().numpy()
+    if arr.dtype != np.uint8:
+        arr = (arr * 255.0).clip(0, 255).astype(np.uint8)
+    return arr
+
+
 def _to_dinov2_input(images: np.ndarray) -> torch.Tensor:
     """(N, H, W, 3) uint8 -> (N, 3, 224, 224) ImageNet-normalized float tensor."""
     if images.dtype != np.uint8:

@@ -8,7 +8,10 @@ metric (retrieval/metrics.py, retrieval/fusion.py) query against.
 
 from __future__ import annotations
 
+import os
+import pickle
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -105,3 +108,27 @@ def build_chunk_dictionary(
     if all(c.value is not None for c in all_chunks):
         key_values = np.array([c.value[0] for c in all_chunks], dtype=np.float32)
     return ChunkDictionary(chunks=all_chunks, key_embeddings=key_embeddings, key_values=key_values)
+
+
+def save_pool(pool: ChunkDictionary, path: Path) -> None:
+    # Write-to-temp-then-rename: an OOM kill (or any crash) mid pickle.dump leaves
+    # a truncated file at `path` otherwise, which build_retrieval_pool.py's
+    # out_path.exists() skip-check would then silently treat as a valid, already-
+    # built pool on the next resume. os.replace is atomic on the same filesystem,
+    # so `path` only ever exists as a complete file.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "wb") as f:
+        pickle.dump(pool, f)
+    os.replace(tmp_path, path)
+
+
+def load_pool(path: Path) -> ChunkDictionary:
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def load_pools(pool_dir: Path, tasks: list[str], task_slug) -> dict[str, ChunkDictionary]:
+    """task_slug: viktr.data.icl_dataset.task_slug, passed in rather than imported
+    here to avoid a retrieval -> data import (data already imports retrieval)."""
+    return {task: load_pool(pool_dir / f"{task_slug(task)}.pkl") for task in tasks}
