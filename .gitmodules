@@ -4,3 +4,6 @@
 [submodule "third_party/ricl_openpi"]
 	path = third_party/ricl_openpi
 	url = https://github.com/ricl-vla/ricl_openpi.git
+[submodule "third_party/nyu-finger-robot"]
+	path = third_party/nyu-finger-robot
+	url = https://github.com/lair-research-nyu/nyu-finger-robot.git
