@@ -29,6 +29,26 @@ plain pi05/pi0-FAST policy:
    already be cached under `~/.cache/torch/hub` (same assumption training
    makes) — no network fetch expected on a compute node lacking outbound
    internet.
+3. **A custom FAST action tokenizer.** This is a pi0-FAST-backend dependency
+   (not VICTR-specific — every `yor_icl_fast_*` config needs it), but it's
+   easy to miss since it isn't vendored in this repo or `third_party/openpi`.
+   `Pi0FastVictrConfig(fast_model_tokenizer_kwargs={"fast_tokenizer_path": ...})`
+   points at
+   `third_party/nyu-finger-robot/outputs/fast_tokenizer/yor-icl-expanded/`
+   (187KB, 4 files) — a DCT+BPE action tokenizer trained on this project's own
+   `icl-dataset` expanded-task action distribution (same scheme as
+   `physical-intelligence/fast`, just refit locally instead of using the
+   generic public one). `openpi/models/tokenizer.py`'s `FASTTokenizer` loads
+   it via `AutoProcessor.from_pretrained(fast_tokenizer_path,
+   trust_remote_code=True)` — `trust_remote_code=True` matters because the
+   directory ships its own `processing_action_tokenizer.py`
+   (`UniversalActionProcessor`), not just tokenizer data. Copy the whole
+   `yor-icl-expanded/` directory to the serving machine (it's self-contained:
+   `processor_config.json`, `processing_action_tokenizer.py`,
+   `bpe_tokenizer/{tokenizer.json,tokenizer_config.json}`, plus an informational
+   `metadata.json` that isn't required to load) and point
+   `fast_tokenizer_path` at wherever it lands locally — no network fetch
+   needed once it's local.
 
 **Do not serve directly from the `yor_icl_fast_victr_vision_expanded`
 training config** — its `precomputed_context_dir` makes retrieval do an O(1)
