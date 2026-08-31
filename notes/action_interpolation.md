@@ -113,13 +113,34 @@ data-loading time; new `Observation` fields (`model.py`) threaded through
 `lamda=10.0`, `max_action_tokens=224`, live retrieval only --
 `precomputed_context_dir` must stay unset).
 
-**Not yet done**: an actual training run (not launched this session -- this is
-the code path only) and any eval/comparison against
+**Not yet done**: an actual training run that gets past startup (see job history
+in `notes/training_runs.md` -- 16520341 crashed 8min in on a real bug, fixed
+2026-08-28, see below) and any eval/comparison against
 `yor_icl_fast_victr_vision_expanded` without interpolation. `max_action_tokens=224`
 is carried over from `yor_icl_fast_victr_vision_expanded`'s own config comment
 (measured/estimated ~191-token ceiling for this action space), not independently
 re-measured for the action-only (`tokenize_action_only`) path specifically --
 worth checking against real data before trusting it doesn't truncate.
+
+**Bug found and fixed (2026-08-28), job 16520341:** `RetrievalContextInputs`
+looked up the DINOv2 pool file with `task = str(data["prompt"])` -- but by the
+time this transform runs, `data_loader.py`'s `PromptFromLeRobotTask` has already
+replaced `data["prompt"]` with the *overridden* display prompt
+(`YOR_EXPANDED_TASK_PROMPT_OVERRIDES`), while pool `.pkl` files are named by
+`task_slug()` of the *raw* lerobot task string. All 8 override entries map to a
+different string than their key, so every one of them slug-mismatched its pool
+file (crash: looked for a pool file that doesn't exist). This is the *only*
+config that hits this code path live -- every other retrieval arm sets
+`precomputed_context_dir`, which takes an O(1) episode-index array-lookup branch
+instead and never calls the task-string pool lookup at all; the serve-only twin
+(`yor_icl_fast_victr_vision_expanded_serve`) also has `precomputed_context_dir=
+None` and shares the same latent bug, just never yet exercised with an
+overridden task's prompt. Fixed by threading the inverse of
+`task_prompt_overrides` into `RetrievalContextInputs.prompt_to_task_overrides`
+(`config.py`'s `LeRobotYorVictrDataConfig.create()`), so the pool lookup maps
+the display prompt back to the raw task string first. Verified against the real
+pool directory: all 8 overridden tasks now resolve to their existing `.pkl`
+files.
 
 ## What this is for
 

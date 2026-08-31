@@ -22,8 +22,16 @@
 # size: measured ~50KB/image (PNG, embedded in parquet) x 3 cameras x 1,019,948
 # frames =~ 150GB total.
 #
-# Resumable: rerunning skips any shard whose output dir already exists, and
-# --merge always overwrites the final dir (safe to rerun once every shard is done).
+# Resumable: this script itself (not just precompute_frame_cache.py) skips
+# launching any shard whose output dir already exists, and --merge always
+# overwrites the final dir (safe to rerun once every shard is done).
+# mem=120G is cpu_short's QOS-enforced per-user cap (MaxTRESPU on QOS
+# cpu_short), not a tunable choice -- sbatch rejects anything higher outright.
+# Job 16515892 OOM-killed 6/32 shards near the tail of a ~1h15m run at this
+# same 120G (26/32 finished cleanly and were preserved). Since the cap can't be
+# raised, a rerun instead launches ONLY shards without an existing output dir
+# (see the loop below) -- far fewer concurrent processes than 32 fits well
+# within the memory 26-of-32 concurrent shards already proved safe.
 #
 # Submit:
 #   sbatch --account=<account> shells/slurm/victr_precompute_frame_cache_job.sh <repo_dir>
@@ -63,9 +71,15 @@ SHARD_DIR="outputs/frame_cache_expanded_frozen_vision/shards"
 OUT_DIR="third_party/openpi/assets/yor_icl_pi05_expanded_frozen_vision_cache_224"
 NSHARDS=32
 
-echo "--- launching $NSHARDS parallel shards (openpi venv) ---"
+echo "--- launching parallel shards (openpi venv), skipping already-completed ones ---"
 pids=()
+launched=0
 for ((i = 0; i < NSHARDS; i++)); do
+    shard_id=$(printf '%03d' "$i")
+    if [ -d "$SHARD_DIR/shard${shard_id}" ]; then
+        echo "shard $i already done, skipping launch"
+        continue
+    fi
     third_party/openpi/.venv/bin/python3 third_party/openpi/scripts/precompute_frame_cache.py \
         --icl-dataset-root "$ICL_DATASET_ROOT" \
         --episodes-json "$EPISODES_JSON" \
@@ -73,7 +87,9 @@ for ((i = 0; i < NSHARDS; i++)); do
         --num-shards "$NSHARDS" --shard-index "$i" \
         > "logs/precompute-frame-cache-${SLURM_JOB_ID}-shard${i}.out" 2>&1 &
     pids+=($!)
+    launched=$((launched + 1))
 done
+echo "--- launched $launched shard(s) ---"
 fail=0
 for pid in "${pids[@]}"; do
     wait "$pid" || fail=1
