@@ -41,6 +41,9 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--primary-camera", default=PRIMARY_CAMERA)
     parser.add_argument("--chunk-size", type=int, default=CONTEXT_CHUNK_SIZE)
+    parser.add_argument("--train-frac", type=float, default=0.85)
+    parser.add_argument("--pool-frac", type=float, default=0.10)
+    parser.add_argument("--test-frac", type=float, default=0.05, help="0.0 for a plain train/pool split, no held-out eval set")
     parser.add_argument(
         "--tasks",
         choices=["default", "all", "expanded"],
@@ -70,7 +73,9 @@ def main() -> None:
         tasks = expanded_tasks(root=args.root)
     if args.only_task is not None and args.only_task not in tasks:
         raise ValueError(f"--only-task {args.only_task!r} is not in the --tasks={args.tasks!r} set")
-    splits = build_splits(tasks, seed=args.seed, root=args.root)
+    splits = build_splits(
+        tasks, seed=args.seed, root=args.root, train_frac=args.train_frac, pool_frac=args.pool_frac, test_frac=args.test_frac
+    )
     splits_path = args.out_dir / "splits.json"
     save_splits(splits, splits_path)
     print(f"wrote splits -> {splits_path}")
@@ -86,6 +91,17 @@ def main() -> None:
     all_episodes_path = args.out_dir / "all_episodes.json"
     all_episodes_path.write_text(json.dumps(all_episodes, indent=2))
     print(f"wrote all_episodes -> {all_episodes_path}")
+
+    # Flat, cross-task train-only episode list (no pool/test leakage into training
+    # queries) -- for an openpi TrainConfig's episodes_path, mirroring the flat-list
+    # format assets/yor_icl_expanded_episodes.json already uses (which is actually
+    # train+pool+test combined, not train-only -- see notes/training_runs.md for why
+    # that matters for VICTR arms specifically: a query drawn from a pool episode can
+    # retrieve its own episode's chunks back out of the pool).
+    train_episodes = sorted({ep for s in splits.values() for ep in s["train"]})
+    train_episodes_path = args.out_dir / "train_episodes.json"
+    train_episodes_path.write_text(json.dumps(train_episodes, indent=2))
+    print(f"wrote train_episodes ({len(train_episodes)} episodes, no pool/test overlap) -> {train_episodes_path}")
 
     dinov2 = load_dinov2()
 

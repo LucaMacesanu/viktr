@@ -357,12 +357,15 @@ def build_splits(
     pool_frac: float = 0.10,
     test_frac: float = 0.05,
 ) -> dict[str, dict[str, list[int]]]:
-    """Deterministic, per-task-stratified 85/10/5 train/pool/test split (paper Sec
-    III-A(a): "we hold out 10% of demonstrations as a shared context pool... the
-    remaining 90% supplying query pairs"; the 90% is further split 85/5 here into
+    """Deterministic, per-task-stratified train/pool/test split (paper Sec III-A(a):
+    "we hold out 10% of demonstrations as a shared context pool... the remaining 90%
+    supplying query pairs"; the default 85/10/5 further splits that 90% into
     train-queries and a held-out offline-eval set, per the user's own choice, since
     the paper doesn't need a held-out set within meta-training itself -- it evaluates
-    on a wholly separate 24-task suite instead (Sec IV-B), which we don't have)."""
+    on a wholly separate 24-task suite instead (Sec IV-B), which we don't have).
+    Pass test_frac=0.0 for a plain train/pool split with no held-out eval set -- each
+    frac's episode count only gets the max(1, ...) floor when its frac is > 0, so a
+    0.0 frac genuinely yields zero episodes instead of siphoning 1 off train per task."""
     if abs(train_frac + pool_frac + test_frac - 1.0) > 1e-6:
         raise ValueError(f"fractions must sum to 1, got {train_frac}+{pool_frac}+{test_frac}")
     rng = random.Random(seed)
@@ -371,11 +374,11 @@ def build_splits(
         eps = episodes_for_task(task, root=root)
         rng.shuffle(eps)
         n = len(eps)
-        n_pool = max(1, round(n * pool_frac))
-        n_test = max(1, round(n * test_frac))
+        n_pool = max(1, round(n * pool_frac)) if pool_frac > 0 else 0
+        n_test = max(1, round(n * test_frac)) if test_frac > 0 else 0
         n_train = n - n_pool - n_test
         if n_train < 1:
-            raise ValueError(f"task {task!r} has only {n} episodes; too few for an 85/10/5 split")
+            raise ValueError(f"task {task!r} has only {n} episodes; too few for a {train_frac}/{pool_frac}/{test_frac} split")
         splits[task] = {
             "train": sorted(eps[:n_train]),
             "pool": sorted(eps[n_train : n_train + n_pool]),

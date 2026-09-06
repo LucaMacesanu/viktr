@@ -113,14 +113,52 @@ data-loading time; new `Observation` fields (`model.py`) threaded through
 `lamda=10.0`, `max_action_tokens=224`, live retrieval only --
 `precomputed_context_dir` must stay unset).
 
-**Not yet done**: an actual training run that gets past startup (see job history
-in `notes/training_runs.md` -- 16520341 crashed 8min in on a real bug, fixed
-2026-08-28, see below) and any eval/comparison against
-`yor_icl_fast_victr_vision_expanded` without interpolation. `max_action_tokens=224`
-is carried over from `yor_icl_fast_victr_vision_expanded`'s own config comment
-(measured/estimated ~191-token ceiling for this action space), not independently
-re-measured for the action-only (`tokenize_action_only`) path specifically --
-worth checking against real data before trusting it doesn't truncate.
+**Status (2026-09-05):** a real training run is finally live -- job 16992055
+(`full`, 2x H200, `--time=2-16:00:00`), after fixing two more bugs (below) that
+had blocked every prior attempt from getting past a handful of steps. Not yet
+done: eval/comparison against `yor_icl_fast_victr_vision_expanded` without
+interpolation. `max_action_tokens=224` is carried over from
+`yor_icl_fast_victr_vision_expanded`'s own config comment (measured/estimated
+~191-token ceiling for this action space), not independently re-measured for
+the action-only (`tokenize_action_only`) path specifically -- worth checking
+against real data before trusting it doesn't truncate.
+
+**Bug found and fixed (2026-09-05), job 16991490:** `yor_retrieval._load_pool_cached`
+(`@functools.lru_cache(maxsize=None)`) let each dataloader worker accumulate
+every distinct task's *entire* pool (images included) it happened to draw over
+an epoch. This dataset's 31 task pools total ~29GB, dominated by a few outliers
+(`sort_the_items_into_their_containers.pkl` alone ~5.9GB) -- with global
+shuffling and `num_workers=8`, that's effectively the whole 29GB per worker,
+~232GB across all workers. This was flagged as an untested risk back when
+16526464 was written up (see below) but never actually hit until this session's
+debug run (`--mem=200G`) finally ran long enough to reach it: SLURM logged
+`Detected 1 oom_kill event`, `DataLoader worker ... killed by signal: Killed`.
+Fixed by bounding the cache (`maxsize=4`, ~12GB worst case per worker) --
+LRU eviction still gets full hits for the common near-term-reuse case, just
+without retaining the entire corpus indefinitely.
+
+**Bug found and fixed (2026-09-05), found by inspection (no crash):**
+`RetrievalContextInputs`'s interpolation branch FAST-tokenized the retrieved
+neighbor's actions (`nearest.actions`, raw physical units straight from the
+pool) directly via `tokenize_action_only`, with no normalization. But the
+*query's* own actions are quantile-normalized (`openpi.transforms.Normalize`,
+this config's `use_quantile_norm=True`) before they ever reach the FAST
+tokenizer -- so the neighbor's tokens and the query's own postfix tokens were
+being decoded from two different numeric domains that only coincidentally
+share the same vocabulary. `interpolate_actions`/`is_nearest_match` (comparing
+`nearest_action_tokens` against the query's own target token ids) would have
+almost never actually matched, silently defeating the entire interpolation
+mechanism without ever raising an error -- the training loss would look
+plausible while `lamda`/`exp_lamda_distance` had essentially no real effect.
+This wasn't caught by any prior debug run because none of them got far enough
+past the two blocking bugs above/below to reach a step where this would show
+up as anything visible (it doesn't crash). Fixed by threading the query's own
+`action_norm_stats` (loaded once in `LeRobotYorVictrDataConfig.create()`, same
+`base.norm_stats["actions"]` the downstream `Normalize` transform uses) into
+`RetrievalContextInputs`, and applying the identical `(x-q01)/(q99-q01+1e-6)*2-1`
+quantile formula (plus the same dim-16:20 `drop_base_lift` handling
+`yor_policy.YorInputs` applies to the query) to the neighbor's actions before
+tokenizing them -- see `yor_retrieval.py`'s interpolation-branch comment.
 
 **Bug found and fixed (2026-08-28), job 16520341:** `RetrievalContextInputs`
 looked up the DINOv2 pool file with `task = str(data["prompt"])` -- but by the
