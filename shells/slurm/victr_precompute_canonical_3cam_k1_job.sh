@@ -30,10 +30,10 @@
 #SBATCH --job-name=precompute-canonical-3cam-k1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=120G
+#SBATCH --cpus-per-task=120
+#SBATCH --mem=250G
 #SBATCH --time=05:45:00
-#SBATCH --partition=cpu_short
+#SBATCH --partition=cs
 #SBATCH --output=logs/victr-precompute-canonical-3cam-k1-%j.out
 #SBATCH --error=logs/victr-precompute-canonical-3cam-k1-%j.err
 
@@ -58,17 +58,30 @@ OUT_DIR="outputs/victr/retrieval_context_canonical_3cam_k1"
 FAST_TOKENIZER_PATH="$REPO_DIR/third_party/nyu-finger-robot/outputs/fast_tokenizer/yor-icl-canonical"
 NORM_STATS_JSON="third_party/openpi/assets/yor_icl_pi05_canonical_extended/icl-dataset/norm_stats.json"
 CAMERA_KEYS="observation.images.zed,observation.images.fish0,observation.images.fish1"
-NSHARDS=8
+# 20 canonical tasks -> NSHARDS=20 is the finest granularity _assign_tasks_to_shards
+# supports (one task per shard, no bin-packing imbalance possible). Real run showed
+# byte-size bin-packing at NSHARDS=8 put 3 tasks / 198 episodes in the worst shard vs.
+# 1 task / 100 episodes in the best -- pool file size is a poor proxy for frame count.
+# 120 cpus / 20 shards = 6 threads/shard (was 4), on a 128-cpu cpu_short node.
+# Per-task pool peak is <=5.1GB (clean_the_plate, the largest of the 20 canonical
+# pools) since _load_pool_bounded's maxsize=1 cache only ever holds one task's pool
+# per shard process -- 20 concurrent shards is nowhere near the 250G job memory cap.
+# Safe to resubmit over an in-progress or partially-completed run: output paths are
+# keyed by (out_dir, metric, episode_index) only, never by shard index, and
+# precompute_episode resumes any interrupted episode from its last completed
+# --frame-window-size-sized window via its .partial files -- no risk of duplicate or
+# lost work from changing NSHARDS between runs.
+NSHARDS=20
 
 test -f "$ALL_EPISODES_JSON" || { echo "missing $ALL_EPISODES_JSON" >&2; exit 1; }
 test -d "$POOL_DIR" || { echo "missing $POOL_DIR" >&2; exit 1; }
 test -d "$FAST_TOKENIZER_PATH" || { echo "missing $FAST_TOKENIZER_PATH" >&2; exit 1; }
 test -f "$NORM_STATS_JSON" || { echo "missing $NORM_STATS_JSON" >&2; exit 1; }
 
-export OMP_NUM_THREADS=4
-export MKL_NUM_THREADS=4
+export OMP_NUM_THREADS=6
+export MKL_NUM_THREADS=6
 
-echo "--- metric=$METRIC: launching $NSHARDS parallel shards, 4 threads each ---"
+echo "--- metric=$METRIC: launching $NSHARDS parallel shards, $OMP_NUM_THREADS threads each ---"
 pids=()
 for ((i = 0; i < NSHARDS; i++)); do
     third_party/openpi/.venv/bin/python3 third_party/openpi/scripts/precompute_retrieval_context.py \
