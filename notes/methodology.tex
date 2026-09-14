@@ -1,0 +1,306 @@
+% methodology.tex
+% Methodology section for VICTOR paper.
+% Intended to be \input{} from the main paper .tex file.
+
+
+
+\section{Methodology}
+\label{sec:methodology}
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.98\textwidth]{figures/blicl_method.pdf}
+    \caption{\textbf{\method method overview (placeholder).} At deployment,
+    the demonstration pool $\mathcal{D}_\ell$ feeds two in-context
+    estimators. The IC-VFE ($\phi$) conditions on one context demonstration
+    to produce a calibrated progress estimate $\hat v_t$ for the current
+    observation $o_t$; $\hat v_t$, fused with visual similarity, drives
+    retrieval of a context chunk $c_t$ from the same pool. The IC-VLA
+    ($\theta$) conditions on $c_t$ to predict the next action chunk,
+    closing the loop without any parameter updates. \gap{placeholder
+    figure -- replace with final diagram once the layout in
+    Section~\ref{sec:context-retrieval} is finalized.}}
+    \label{fig:method}
+\end{figure*}
+
+In this section we present an overview of \method: the problem setting, how
+per-task context is constructed and retrieved, the architecture and
+meta-training objective of the In-Context Value Function Estimator (IC-VFE),
+and the architecture and meta-training objective of the IC-VLA policy.
+
+\subsection{Problem Formulation}
+\label{sec:problem-formulation}
+
+We consider a multi-task vision-language-action setting. A task is specified by a
+language instruction $\ell \in \mathcal{L}$, and an observation
+$o_t = [X_t^1, \dots, X_t^n, q_t]$ consists of $n$ camera images and proprioceptive
+state $q_t$. In our real-robot deployment $n=3$ and $q_t$ is an 18-dimensional
+per-arm end-effector position and orientation, the orientation given as a 6D
+rotation representation rather than a unit quaternion to avoid the antipodal
+(double-cover) ambiguity a quaternion state introduces; the action chunk
+$a_{t:t+H}$ is correspondingly 20-dimensional per step (per-arm delta
+end-effector position relative to the chunk's first frame, absolute 6D
+rotation, and a gripper command). A base
+VLA policy $\pi_\theta(a_{t:t+H} \mid o_t, \ell)$ maps an observation and
+instruction to an action chunk $a_{t:t+H}$.
+Each demonstration $\tau = (o_0, a_0, \dots, o_T)$ is annotated offline
+(Section~\ref{sec:dataset}) with a scalar progress
+value $v_t \in [0, 1]$, with $v_0 \approx 0$ and $v_T = 1$ on success.
+
+\paragraph{Demonstration pool.} Each meta-training task $\ell$ has an associated
+demonstration set $\mathcal{D}_\ell$: individual $(o_t, a_{t:t+H})$ pairs from
+$\mathcal{D}_\ell$ supply queries for the base flow-matching loss, and the same
+per-task episode set is flattened into the demonstration chunk dictionary
+$\mathcal{D}_\ell^{\text{ctx}}$ that both in-context estimators condition on
+(Sections~\ref{sec:ic-vfe-objective}, \ref{sec:ic-vla-objective}) and that supplies
+the retrieval pool defined in Section~\ref{sec:context-retrieval}. Unlike an
+idealized held-out split, our current real-robot training arms draw
+$\mathcal{D}_\ell^{\text{ctx}}$ from the same episodes used for training queries
+rather than a disjoint subset; enforcing a strict split is future work. At
+deployment there is no train/context distinction to begin with: the user supplies
+a single small demonstration set $\mathcal{D}_\ell$ ($N \le 10$) for the new task,
+and this entire set plays the role $\mathcal{D}_\ell^{\text{ctx}}$ played during
+meta-training.
+
+\paragraph{Bi-level structure.} We call the overall method \method\ because two
+independent in-context estimators compose at inference time, both conditioned on
+the same demonstration pool but in different forms (Section~\ref{sec:context-retrieval}):
+(1) the IC-VFE conditions on one full context demonstration to produce a calibrated
+progress estimate $\hat{v}_t \in [0,1]$ for the current observation, and (2) that
+estimate, fused with visual similarity, drives a retrieval step that selects a context
+chunk $c_t$ consumed by the IC-VLA to predict the next action chunk. Both estimators
+are meta-trained on oracle progress values $v_t$; at deployment, oracle values are
+replaced by $\hat{v}_t$ from the trained IC-VFE, so downstream retrieval quality is
+bounded by IC-VFE accuracy.
+
+\subsection{Preliminaries}
+\label{sec:preliminaries}
+
+Both the base VLA and the IC-VLA follow the $\pi_{0.5}$ recipe of a VLM backbone
+paired with a flow-matching action expert
+that predicts the continuous action chunk $a_{t:t+H}$~\cite{pi05}. Given a denoising
+timestep $\eta \in [0,1]$, a noised action chunk $a_{t:t+H}^\eta = \eta\, a_{t:t+H} +
+(1-\eta)\,\epsilon$ with $\epsilon \sim \mathcal{N}(0, I)$, and a velocity field
+$u_\theta$ predicted by the action expert conditioned on $(o_t, \ell)$ (and, for the
+IC-VLA, the retrieved context $c_t$), the flow-matching loss is
+\begin{equation}
+    L_{\text{flow}}\big(a_{t:t+H} \mid \cdot\,; \theta\big)
+    = \mathbb{E}_{\eta, \epsilon}\Big[\big\|u_\theta(a_{t:t+H}^\eta, \eta \mid \cdot) -
+    (a_{t:t+H} - \epsilon)\big\|^2\Big] ,
+    \label{eq:flow-loss}
+\end{equation}
+which we reuse, without modification, as the action-chunk loss term for both the base
+VLA fine-tune and the IC-VLA (Section~\ref{sec:ic-vla-objective}).
+
+\subsection{Context Construction and Retrieval}
+\label{sec:context-retrieval}
+
+The demonstration pool $\mathcal{D}_\ell^{\text{ctx}}$ (or $\mathcal{D}_\ell$ at
+deployment; Section~\ref{sec:problem-formulation}) feeds the two estimators in two
+different forms. First, one whole demonstration $\tau_{\text{ctx}} \sim
+\mathcal{D}_\ell^{\text{ctx}}$ is sampled and given to the IC-VFE as the context
+sequence it conditions on to produce $\hat v_t$ (Section~\ref{sec:ic-vfe-architecture}).
+Second, the pool is broken apart into a frame-level retrieval buffer from which the
+IC-VLA's retrieval step selects a context chunk $c_t$. This mirrors the ``priming
+vs.\ retrieval buffer'' split in RICL~\cite{ricl}, except here the same held-out set
+serves both roles for both estimators, keeping the two meta-training procedures
+aligned on identical context data.
+
+\paragraph{Chunk dictionary construction.} We flatten the $N$-demonstration pool into
+a \emph{demonstration chunk dictionary}: a key--value store whose keys are
+DINO-v2~\cite{dinov2} embeddings of a chunk's first frame, and whose values are the
+chunk contents (per-frame image, proprioception, and action). To
+build the dictionary, each of the pool's demonstrations is split into overlapping
+chunks of fixed length $L$ (in frames, $L=10$ in our implementation) with a
+50\%-overlap stride $S = L/2$ between consecutive chunks; a demonstration of $T$
+frames contributes $\lfloor (T-L)/S \rfloor + 1$ chunks, and each chunk carries its
+oracle value (meta-training) or IC-VFE-estimated value (deployment). Because
+pool chunks overlap 50\% within an episode, temporally-adjacent chunks often have
+near-identical DINO-v2 embeddings; to prevent unconstrained top-$k$ retrieval from
+collapsing onto several near-duplicate chunks from the same episode, retrieval
+enforces an episode-diversity constraint, selecting at most one chunk per source
+episode among the top-$k$ neighbors.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{figures/demo_dictionary.pdf}
+    \caption{\textbf{Demonstration chunk dictionary construction (placeholder).}
+    Illustration of splitting a demonstration into overlapping chunks of size $L$ and
+    indexing each by the DINO embedding of its first frame. \gap{placeholder figure --
+    replace with final diagram.}}
+    \label{fig:chunk-dict}
+\end{figure}
+
+\paragraph{Retrieval.} A retrieval function
+\begin{equation}
+    f_{\text{retrieve}}\big(o_t, \hat{v}_t, \mathcal{P}_\ell\big) \;\rightarrow\;
+    c_t = \big(n^{(1)}, \dots, n^{(k)}\big)
+    \label{eq:retrieval-fn}
+\end{equation}
+queries the chunk dictionary $\mathcal{P}_\ell$ and selects the $k$ nearest neighbor
+chunks $n^{(i)} = (o', a', v')$ (subject to the episode-diversity constraint above),
+ranked by a fused score over visual similarity $d_{\text{vis}}(o_t, o')$ (DINO-v2
+embedding $\ell_2$ distance, as in RICL) and value alignment $|\hat{v}_t - v'|$. Our
+vision+value \method variant combines the two by independently $z$-scoring
+$d_{\text{vis}}$ and $|\hat{v}_t - v'|$ across the current candidate pool -- so the
+two signals, which live on very different scales, contribute comparably -- and
+summing the result, $g(d_{\text{vis}}, |\hat v_t - v'|) = z(d_{\text{vis}}) +
+z(|\hat v_t - v'|)$, rather than a fixed weighting such as RICL's distance-decay
+$e^{-\lambda d}$. This fixed fusion is a simpler alternative to a jointly-trained
+scalar fusion $g_\psi$ -- a small 2-layer MLP over $[d_{\text{vis}}, |\hat v_t -
+v'|]$, trained end-to-end with the IC-VLA via a soft, temperature-annealed
+relaxation of top-$k$ selection since hard top-$k$ is not itself differentiable --
+which we leave to future work (Section~\ref{sec:limitations}).
+
+\paragraph{Context window token layout.} The $k$ retrieved neighbor chunks $c_t$ are
+placed in the IC-VLA's context ordered farthest-to-nearest, so that the nearest
+neighbor immediately precedes the query observation tokens. Each neighbor chunk
+contributes one image per input camera (all taken from the chunk's first frame)
+together with a single combined text/action token span, produced by the base
+$\pi_{0.5}$ tokenizer applied to the neighbor's own task string, its initial
+proprioceptive state (digitized directly into the prompt text -- the same mechanism
+$\pi_{0.5}$ already uses to embed the query's own state), and its
+action-horizon-length action window (FAST-tokenized); this reuses $\pi_{0.5}$'s
+existing text/action embedding path exactly, introducing no new token type. Each
+neighbor block receives a learned neighbor-rank embedding (added to every token in
+the block) so the IC-VLA can in principle distinguish nearer from farther context;
+all real-robot runs reported in this work use $k=1$ (Section~\ref{sec:limitations}),
+so this embedding currently only marks the presence of retrieved context rather than
+distinguishing among multiple ranks. This layout gives the context-conditioned
+policy
+\begin{equation}
+    \pi_\theta\big(a_{t:t+H} \mid o_t, \ell, c_t\big) .
+    \label{eq:ic-vla-policy}
+\end{equation}
+
+\subsection{IC-VFE Architecture and Demonstration Bin Tokenization}
+\label{sec:ic-vfe-architecture}
+
+Rather than estimating value from the query observation alone (as in RECAP's
+$p_\phi(V \mid o_t, \ell)$~\cite{pi06}), the IC-VFE additionally conditions on one full
+context demonstration's downsampled frame sequence $\tau_{\text{ctx}}$
+(Section~\ref{sec:context-retrieval}):
+\begin{equation}
+    p_\phi\big(V \mid o_t, \ell, \tau_{\text{ctx}}\big) \in \Delta^B ,
+    \label{eq:ic-vfe}
+\end{equation}
+a distribution over $B = 201$ discretized value bins (following RECAP's distributional
+value head), from which we recover a scalar estimate $\hat{v}_t = \sum_b p_\phi(V = b
+\mid \cdot)\, \nu(b)$. Intuitively, the context demonstration lets the IC-VFE
+calibrate what progress looks like for this specific task, object, or embodiment
+instance before scoring the live observation, rather than relying purely on
+generalization from pretraining. A no-context ablation removes only the demonstration
+sequence while retaining the same current-observation encoder and prediction head.
+
+\paragraph{Architecture.} The context demonstration is downsampled end-anchored (most
+recent frames preferred, at most 200 slots) into a fixed number of temporal
+\emph{context slots}, each visually tokenized by a frozen Gemma 3 vision tower and a
+trainable patch merger (compressing 256 pooled visual tokens per camera to 16, and
+projecting into the 640-dimensional Gemma 270M embedding space), alongside a
+proprioceptive token; with 3 cameras this gives 49 tokens per slot and up to 9{,}800
+context tokens total. The current observation is separately encoded at two
+resolutions: a trainable detail connector projects all 256 pooled tokens per camera
+independently (preserving fine visual detail), while the same patch merger used for
+the context path also produces a 16-token summary (placing the current frame in the
+same compressed visual space as the demonstration). Context tokens, the dual-resolution
+current-observation tokens, current proprioceptive state, the tokenized instruction
+(up to 32 tokens), and a learnable value-query token are concatenated and processed by
+a Gemma 3 270M causal decoder; because the value-query token is last, its final hidden
+state attends to all preceding tokens and is mapped by a value head to a categorical
+distribution over the 201 value bins.
+
+\paragraph{Demonstration-derived value-bin tokenization.} The value target is defined
+by the relative progress of the current query frame within its successful
+demonstration. For a successful trajectory $\tau = (o_0, \dots, o_{T-1})$, the
+continuous value assigned to frame $t$ is
+\begin{equation}
+    y_t = \frac{t}{T-1}, \qquad T > 1 ,
+\end{equation}
+so the initial frame has value $0$, the terminal successful frame has value $1$, and
+intermediate frames are labeled by linear relative progress; for the degenerate case
+$T=1$, the single terminal frame is assigned $y_0 = 1$. We discretize this continuous
+target into $B = 201$ uniformly spaced value bins. The scalar represented by bin $b
+\in \{0, \dots, B-1\}$ is $\nu_b = b / (B-1)$, so adjacent bins are separated by
+$1/200 = 0.005$. The target bin index for value $y_t$ is
+\begin{equation}
+    b_t = \operatorname{clip}\left(
+        \operatorname{round}\left[y_t (B-1)\right],\, 0,\, B-1
+    \right) .
+\end{equation}
+We refer to this operation as demonstration-derived value-bin tokenization because the
+categorical target is obtained from the query frame's position in a successful
+demonstration; these 201 bins are supervision classes for the value head, not tokens
+appended to the multimodal input sequence.
+
+\subsection{IC-VFE Meta-Learning Training Objective}
+\label{sec:ic-vfe-objective}
+
+Let $z_\theta(o_t, \ell, \tau_{\text{ctx}}) \in \mathbb{R}^{B}$ denote the logits
+produced by the value head, where $B = 201$. The predicted categorical value
+distribution is
+\begin{equation}
+    p_\theta(b \mid o_t, \ell, \tau_{\text{ctx}})
+    = \frac{\exp z_{\theta, b}}{\sum_{b'=0}^{B-1} \exp z_{\theta, b'}} .
+\end{equation}
+IC-VFE is trained with categorical cross-entropy against the demonstration-derived
+target bin $b_t$,
+\begin{equation}
+    \mathcal{L}_{\mathrm{IC\text{-}VFE}}(\theta)
+    = -\mathbb{E}_{(o_t, \ell, \tau_{\text{ctx}}) \sim \mathcal{B}}
+    \left[\log p_\theta(b_t \mid o_t, \ell, \tau_{\text{ctx}})\right] ,
+\end{equation}
+where $\mathcal{B}$ denotes the training distribution over query frames, instructions,
+and same-task context demonstrations sampled from $\mathcal{D}_\ell^{\text{ctx}}$
+(Section~\ref{sec:problem-formulation}). For the no-context ablation, the objective is
+unchanged and the conditioning variable $\tau_{\text{ctx}}$ is omitted. The frozen
+vision tower and fixed average-pooling operator are excluded from optimization;
+gradients update the detail connector, shared patch merger, proprio encoder, learned
+source embeddings, Gemma 270M backbone, value-query token, and value head.
+
+At inference time, a scalar value is recovered as the expectation of the predicted
+categorical distribution,
+\begin{equation}
+    \hat{y}_t = \mathbb{E}_{p_\theta}[\nu_b] = \sum_{b=0}^{B-1} p_\theta(b \mid o_t, \ell, \tau_{\text{ctx}})\, \nu_b .
+\end{equation}
+This distributional formulation preserves uncertainty over progress while providing a
+scalar estimate in $[0, 1]$ when required. Mean-squared error and mean-absolute error
+between $\hat{y}_t$ and $y_t$ may be reported as diagnostics, but they are not
+auxiliary optimization terms: the training loss is the categorical cross-entropy
+alone.
+
+\subsection{IC-VLA Architecture and Context Chunk Tokenization}
+\label{sec:ic-vla-architecture}
+
+The IC-VLA shares its base architecture and fine-tuning regime with $\pi_{0.5}$
+(Table~\ref{tab:ft-regime}), extended to accept the retrieved context chunk $c_t$
+alongside the query observation, following the general recipe of placing retrieved
+neighbors in context ordered by rank (as in RICL~\cite{ricl}). The
+token-level layout of this context window --- how each retrieved neighbor is
+tokenized, how many neighbors are retrieved, and how neighbor tokens are ordered
+relative to the query --- is given in Section~\ref{sec:context-retrieval}.
+
+\subsection{IC-VLA Meta-Learning Training Objective}
+\label{sec:ic-vla-objective}
+
+The IC-VLA is trained with the context-conditioned policy $\pi_\theta(a_{t:t+H}
+\mid o_t, \ell, c_t)$ (Equation~\ref{eq:ic-vla-policy}): the action expert predicts
+the continuous action chunk $a_{t:t+H}$ conditioned on the query observation,
+instruction, and retrieved context, trained with the flow-matching loss
+$L_{\text{flow}}$ (Equation~\ref{eq:flow-loss}), following the fine-tuning regime in
+Table~\ref{tab:ft-regime} (Appendix~\ref{app:dataset-prep}) and mirroring the
+stop-gradient interface between the VLM backbone and the action expert used for the
+base $\pi_{0.5}$ fine-tune (Table~\ref{tab:ft-regime}). The training objective is
+\begin{equation}
+    \mathcal{L}_{\mathrm{IC\text{-}VLA}}(\theta)
+    = \mathbb{E}_{(o_t, \ell, c_t) \sim \mathcal{B}}
+    \Big[L_{\text{flow}}\big(a_{t:t+H} \mid o_t, \ell, c_t; \theta\big)\Big] ,
+    \label{eq:ic-vla-loss}
+\end{equation}
+During
+meta-training, the context chunk $c_t$ is sampled by $f_{\text{retrieve}}$
+(Equation~\ref{eq:retrieval-fn}) using oracle progress values $v_t$ from
+$\mathcal{D}_\ell^{\text{ctx}}$ (Section~\ref{sec:problem-formulation}); at
+deployment, oracle values are replaced by the trained IC-VFE's estimate $\hat{v}_t$,
+so retrieval quality at inference time is bounded by IC-VFE accuracy. \gap{confirm
+accuracy.}
+

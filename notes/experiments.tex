@@ -1,0 +1,181 @@
+% experiments.tex
+% Experiments and Results section for VICTOR paper.
+% Intended to be \input{} from the main paper .tex file, after methodology.tex.
+
+% \gap{...} marks a remaining open item that still needs a decision or a
+% citation before submission. Search for "\gap{" to find every open item.
+% Defined with \providecommand so this file is safe to \input from a main
+% paper .tex that may also define \gap in its own preamble.
+\providecommand{\gap}[1]{\textbf{[GAP: #1]}}
+
+\section{Experiments and Results}
+\label{sec:experiments}
+
+We evaluate \method on \NumTasks{} meta-training tasks (\NumEpisodes{}
+episodes, \NumTrainHours{} hours of teleoperated bimanual data) and a
+held-out suite of \NumTaskPairs{} in-domain/out-of-domain task pairs
+(\NumEvalTasks{} tasks total) on the YOR bimanual manipulator~\cite{yor}, in
+five stages: (1) value-function and retrieval quality, (2) the main policy
+comparison, (3) a demonstration-count ablation, (4) a retrieval--policy
+mismatch and context ablation, and (5) a context-sensitivity analysis.
+
+\subsection{Value Function and Retrieval Quality}
+\label{sec:vfe-retrieval-quality}
+
+\begin{table}[t]
+    \centering
+    \caption{\textbf{Value-function and retrieval quality (placeholder).}
+    Value correlation is measured against human progress annotations on the
+    \NumEvalTasks{} evaluation tasks; retrieval MAE uses each method's value
+    predictions in place of the IC-VFE to drive retrieval
+    (Section~\ref{sec:vfe-retrieval-quality}).}
+    \label{tab:vfe-retrieval-results}
+    \footnotesize
+    \begin{tabular}{lrrrr}
+        \toprule
+        & \multicolumn{2}{c}{Value correlation} & \multicolumn{2}{c}{Retrieval MAE} \\
+        Method & Kendall $\tau_b$ & Pearson $r$ & Position & Orientation \\
+        \midrule
+        Robometer (zero-shot) & X.XX & X.XX & X.XX & X.XX \\
+        TOPReward             & X.XX & X.XX & X.XX & X.XX \\
+        GVL                   & X.XX & X.XX & X.XX & X.XX \\
+        RECAP (fine-tuned)    & X.XX & X.XX & X.XX & X.XX \\
+        Robometer (fine-tuned) & X.XX & X.XX & X.XX & X.XX \\
+        IC-VFE (ours)         & \textbf{X.XX} & \textbf{X.XX} & \textbf{X.XX} & \textbf{X.XX} \\
+        \midrule
+        RoboDopamine\textsuperscript{$\dagger$} & X.XX & X.XX & X.XX & X.XX \\
+        \bottomrule
+    \end{tabular}
+    \\[2pt]
+    \raggedright\footnotesize\textsuperscript{$\dagger$}The annotation model itself, fine-tuned as a value estimator; a sanity check on how well its own training target can be fit, not a compared baseline.
+\end{table}
+
+We compare zero-shot value function estimators (Robometer~\cite{robometer},
+TOPReward~\cite{topreward}, GVL~\cite{gvl}) against estimators fine-tuned on
+our full meta-training dataset with dense RoboDopamine annotations
+(RECAP~\cite{pi06}, Robometer, and our IC-VFE). Each method is scored by (a)
+Kendall's $\tau_b$ and Pearson correlation against human-annotated progress
+values, and (b) our retrieval-quality metric: using a method's value
+predictions in place of the IC-VFE to retrieve a context chunk $c=(o',a')$
+via $f_{\text{retrieve}}$ (Section~\ref{sec:context-retrieval}), then
+computing the MAE between $a'$ and the ground-truth action paired with the
+query observation, separately for position and orientation. Both metrics for
+all methods appear in Table~\ref{tab:vfe-retrieval-results}.
+
+\gap{[Analysis]}
+
+\subsection{Main Evaluation}
+\label{sec:main-eval}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.95\linewidth]{figures/main_sr_barchart.pdf}
+    \caption{\textbf{Total success rate by method (placeholder).} Bars show
+    in-domain and out-of-domain success rate (\%) for each compared method,
+    over \NumRolloutsPerTask{} rollouts per task across all \NumEvalTasks{}
+    tasks. \gap{placeholder figure -- replace with real results.}}
+    \label{fig:main-sr}
+\end{figure}
+
+We compare $\pi_{0.5}$ trained for 40k and 50k steps (no retrieval),
+RICL-$\pi_{0.5}$~\cite{ricl}, and three \method variants: value-based
+retrieval, vision-similarity retrieval, and vision+value retrieval (our main
+method). All methods are trained on the same meta-training data and
+evaluated over \NumRolloutsPerTask{} rollouts per task on all \NumEvalTasks{}
+tasks. We report total and partial (subtask-level) success rate, split by
+in-domain and out-of-domain task, in Figure~\ref{fig:main-sr}.
+
+\gap{[Analysis]}
+
+\subsection{Demonstration-Count Ablation}
+\label{sec:demo-count-ablation}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.95\linewidth]{figures/demo_count_sr.pdf}
+    \caption{\textbf{Success rate vs.\ number of context demonstrations
+    (placeholder).} $x$-axis $\in \{1,3,5,7,10\}$ demonstrations, $y$-axis
+    success rate (\%), pooled over 6 tasks. \gap{placeholder figure --
+    replace with real results.}}
+    \label{fig:demo-count}
+\end{figure}
+
+Taking the best policy from Section~\ref{sec:main-eval}, we vary the number
+of demonstrations available in the retrieval buffer over $\{1, 3, 5, 7, 10\}$,
+randomly selected from the available pool, on 6 long-horizon tasks (3
+in-domain and their 3 out-of-domain counterparts), with 10 rollouts per
+configuration ($6 \times 10 \times 5 = 300$ rollouts total).
+
+\gap{[Analysis]}
+
+\subsection{Retrieval--Policy Mismatch and Context Ablation}
+\label{sec:mismatch-ablation}
+
+\begin{table}[t]
+    \centering
+    \caption{\textbf{Train/test retrieval mismatch (placeholder).} Success
+    rate (\%) when the retrieval strategy at test time differs from the one
+    used during meta-training.}
+    \label{tab:retrieval-mismatch}
+    \footnotesize
+    \begin{tabular}{lrr}
+        \toprule
+        Train $\backslash$ Test & Value retrieval & Vision retrieval \\
+        \midrule
+        Value retrieval  & XX.X & XX.X \\
+        Vision retrieval & XX.X & XX.X \\
+        \bottomrule
+    \end{tabular}
+    \quad
+    \begin{tabular}{lrr}
+        \toprule
+        Method & Default & Swapped \\
+        \midrule
+        $\pi_{0.5}$ (+ context) & XX.X & XX.X \\
+        \method (no context)    & XX.X & XX.X \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+We measure how much retrieval choices actually matter at test time in two
+ways. First, we cross the training-time and test-time retrieval strategy
+(value vs.\ vision) for our two single-signal \method variants in a
+$2\times2$ design. Second, we swap context presence: $\pi_{0.5}$ (trained
+without context) is given a retrieved context chunk at test time, and
+\method (trained with context) is deployed with no context at test time.
+Both results are reported as success rate in Table~\ref{tab:retrieval-mismatch}.
+
+\gap{[Analysis]}
+
+\subsection{Context Sensitivity}
+\label{sec:context-sensitivity}
+
+\begin{table}[t]
+    \centering
+    \caption{\textbf{Context sensitivity (placeholder).} MAE between the
+    action predicted from the true retrieved context and the action
+    predicted from random context chunks; higher indicates a policy relies
+    more on its retrieved context.}
+    \label{tab:context-sensitivity}
+    \footnotesize
+    \begin{tabular}{lrr}
+        \toprule
+        Method & Position MAE & Orientation MAE \\
+        \midrule
+        RICL-$\pi_{0.5}$        & X.XX & X.XX \\
+        Ours (value retrieval)  & X.XX & X.XX \\
+        Ours (vision retrieval) & X.XX & X.XX \\
+        Ours (vision + value)   & X.XX & X.XX \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+For each policy, we take an observation, retrieve its context chunk via that
+policy's own retrieval strategy, and record the predicted action $a_c$; we
+then replace the context with randomly sampled chunks from the demonstration
+pool and record the resulting action $a_{\text{rand}}$. We report the MAE
+between $a_c$ and $a_{\text{rand}}$, separately for position and
+orientation, in Table~\ref{tab:context-sensitivity}.
+
+\gap{[Analysis]}
+

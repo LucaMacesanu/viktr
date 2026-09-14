@@ -1,0 +1,296 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{cuted}
+\usepackage{multirow}
+\usepackage{xspace}
+\usepackage{colortbl}
+\usepackage{flushend}
+
+\usepackage[caption=false,font=footnotesize]{subfig}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+% \gap{...} marks an open item that still needs a decision, citation, or
+% missing content before submission. Search this file (and methodology.tex /
+% experiments.tex, which are \input below) for "\gap{" to find every one.
+\providecommand{\gap}[1]{\textbf{[GAP: #1]}}
+\newcommand{\method}{VICTR\xspace}
+\input{macros.tex}
+
+\begin{document}
+\raggedbottom
+\setlength{\textfloatsep}{4pt plus 2pt minus 2pt}
+\setlength{\floatsep}{4pt plus 2pt minus 2pt}
+\setlength{\intextsep}{4pt plus 2pt minus 2pt}
+\setlength{\dbltextfloatsep}{4pt plus 2pt minus 2pt}
+\setlength{\dblfloatsep}{4pt plus 2pt minus 2pt}
+
+\let\OLDthebibliography\thebibliography
+\renewcommand\thebibliography[1]{
+  \OLDthebibliography{#1}
+  \setlength{\itemsep}{1pt}
+  \setlength{\parskip}{0pt}
+}
+
+\renewcommand{\dbltopfraction}{0.95}
+\renewcommand{\dblfloatpagefraction}{0.8}
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\textfraction}{0.05}
+\setcounter{dbltopnumber}{2}
+
+\title{VICTR: Value-Informed Context Retrieval for Vision-Language-Action Models\\
+}
+\author{\IEEEauthorblockN{Anonymous Authors}}
+
+% \author{
+% \IEEEauthorblockN{Luca Macesanu\textsuperscript{*,1}, Tianluo Zhang\textsuperscript{*,1}, Kevin Angers\textsuperscript{1}, Aditya Patil\textsuperscript{1}, Archit Sharma\textsuperscript{1}}
+% \IEEEauthorblockA{\textsuperscript{1}Affiliation}
+% \thanks{\textsuperscript{*}Equal contribution.}
+% }
+
+\maketitle
+
+% \begin{strip}
+%     \centering
+%     \includegraphics[width=0.98\textwidth]{figures/blicl_pull.pdf}
+%     \captionof{figure}{\textbf{Overview of \method (placeholder).}
+%     \textbf{(Left)} At deployment, a user supplies a language instruction and a
+%     small pool of teleoperated demonstrations ($\leq$10) for a new or
+%     out-of-domain task. \textbf{(Center)} An In-Context Value Function
+%     Estimator (IC-VFE) conditions on a full context demonstration to produce a
+%     calibrated progress estimate $\hat v_t$ for the current observation; this
+%     estimate is fused with visual similarity to retrieve the most relevant
+%     context chunk from the demonstration pool. \textbf{(Right)} The retrieved
+%     chunk conditions the IC-VLA's next action-chunk prediction, closing
+%     the loop without any parameter updates. \gap{placeholder figure --
+%     replace with the final architecture diagram; caption is a first draft
+%     and should be revised once Section~\ref{sec:ic-vla-architecture} and
+%     Section~\ref{sec:retrieval} are finalized.}}
+%     \label{fig:pull-figure}
+% \end{strip}
+
+\begin{abstract}
+Vision-language-action (VLA) models are increasingly capable generalists, but
+adapting a pretrained VLA to a new embodiment, environment, or task still
+typically requires collecting many demonstrations, mixing them with the
+original training data, and fine-tuning the base policy -- an expensive loop
+that must be repeated for every new domain. In-context learning (ICL) offers an alternative -- where a model's behavior is adapted at inference time by conditioning on examples supplied as part of its input, rather than by updating its weights. Prior work has shown that VLAs can be post-trained to use a
+handful of demonstrations placed directly in their context window (i.e.\
+prepended as extra input tokens the policy attends to when predicting its
+next action, with no change to its weights), avoiding further gradient
+updates altogether. A central open question for in-context
+VLAs is what to retrieve into that context -- i.e., which stored
+demonstration segment to select and place in the window for a given query --
+and how: existing methods rely primarily on visual similarity between the
+current observation and candidate demonstration frames. We argue that task-relative \emph{progress} is an
+equally important and underexplored retrieval signal, and that value
+function estimators (VFEs) -- widely used to provide reward signals for VLA
+reinforcement learning -- can themselves be made in-context learners. We
+present three contributions: (1) the first In-Context Value Function
+Estimator (IC-VFE), which conditions on a full-length demonstration to
+produce calibrated progress estimates on in- and out-of-domain tasks without
+task-specific fine-tuning; (2) the use of estimated state value, fused with
+visual similarity via a learned scalar combination, as a retrieval signal for
+in-context VLA policies, extending prior work that relies on visual
+similarity alone; and (3) \method, a policy that composes both signals at
+inference time, together with a rigorous real-world evaluation across
+\NumTasks{} tasks on a bimanual manipulator, ablating each design element
+against a RICL baseline.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Vision-Language-Action (VLA) Models, In-Context Learning (ICL), Retrieval-Augmented Generation (RAG), Value Function Estimation, Reinforcement Learning, Bimanual Manipulation
+\end{IEEEkeywords}
+
+\section{Introduction}
+\label{sec:intro}
+
+% \paragraph{Scalable deployment challenges for VLAs.}
+
+Vision-language-action (VLA) models are a promising 
+approach to achieving generalist manipulation in the real world.
+Much of their success has come from exposing them to increasingly diverse
+datasets~\cite{pi05,pi06}, and reinforcement learning has recently been shown
+to boost their performance on specific tasks beyond the ceiling of imitation
+learning alone~\cite{pi06}. 
+Yet, even with increasingly large pretraining efforts, new tasks or robot embodiments still may exist outside of the pretraining domain.
+Recent distributed real-world evaluations bear this
+out at scale: even strong generalist policies exhibit stark decreases in performance especially on long-horizon and out-of-distribution tasks once evaluated outside the environment or task set it was originally trained on ~\cite{roboarena}.
+Simply collecting a large set of expert demonstrations in the new domain and fine-tuning the policy is slow and must be repeated for every new domain, underscoring the need for more efficient adaptation mechanisms.
+
+% Imitation learning alone is also typically insufficient to
+% reach the throughput required of a robust VLA on a specific task, motivating
+% on-policy practice with occasional human intervention~\cite{pi06}. The
+% central difficulty is the end-to-end cost of adapting a VLA to a new domain:
+% collect many demonstrations, retrain the base policy, collect many rollouts,
+% and fine-tune again. This work targets a much shorter loop: collecting few
+% demonstrations ($\leq$10, rather than hundreds), performing real rollouts in
+% which those demonstrations are only ever supplied to a fixed-parameter
+% policy as context -- never used to update its weights -- and requiring at
+% most a single fine-tuning step to reach comparable results. We propose a bi-level retrieval
+% policy with an in-context value function estimator to enable this loop.
+
+% \paragraph{In-context learning in VLAs.}
+
+In-context learning (ICL), which is the practice of supplying examples tasks directly into the context window of a model without updating its weights, has
+already proven successful in Vision-language models (VLMs) ~\cite{flamingo}.
+This idea has recently been extended from VLMs to VLAs: prior work trains policies that
+use a handful of demonstrations as context, boosting in- and out-of-domain
+performance without any fine-tuning stage. A central open question is what
+to retrieve -- i.e., which stored demonstration segment a policy should
+select and place into its context window for a given query -- and how;
+existing methods rely on visual similarity, alone or combined with
+proprioception~\cite{ricl,mimicdroid}. We argue that task-relative progress
+is an important and underexplored complement to visual similarity.
+
+% \paragraph{Value function estimators.}
+Value function estimators (VFEs) have surged in popularity for VLAs, since
+they provide dense reward signals that can be used for a variety of downstream uses, including Reinforcement Learning. 
+General-purpose VFEs built on VLM backbones~\cite{robometer,topreward,sarm} are an active area of work, but they still improve with task-specific fine-tuning.
+We observe that these transformer-based VFEs can instead benefit from the same ICL machinery already applied to VLMs and VLAs: to the best of our knowledge, this work
+proposes the first in-context value function estimator, conditioning on a
+full-length demonstration to boost value-assignment quality on
+out-of-domain or long-horizon tasks without task-specific fine-tuning.
+
+% \paragraph{\method.}
+
+This work presents \textbf{V}alue-\textbf{I}nformed \textbf{C}on\textbf{t}ext \textbf{R}etrieval for VLAs. At test time, \method accepts a language query
+and the robot's current observation, and uses our
+In-Context Value Function Estimator (IC-VFE) to obtain an estimated value
+$\hat v_t$ for that observation. 
+This estimate is fused with visual similarity, following RICL's retrieval formulation~\cite{ricl}, to retrieve a context chunk from a demonstration pool consisting of a small set of expert demonstrations (1--10). The retrieved context then conditions the VLA's next action-chunk prediction. To enable both the IC-VFE and the
+IC-VLA to use demonstrations effectively, both are meta-trained on the same
+held-out context pool per task, using oracle value annotations for retrieval
+during training; at deployment, those oracle values are replaced by the
+IC-VFE's own estimates. We evaluate the full method on \NumTaskPairs{} in-domain and \NumTaskPairs{}
+out-of-domain tasks (Section~\ref{sec:demo-pools}).
+
+In summary, this work makes three primary contributions:
+\begin{enumerate}
+    \item The use of estimated state value as a retrieval signal for
+    in-context VLA learning, fused with visual similarity, extending prior work that relies on visual
+    similarity alone.
+    
+    \item The first In-Context Value Function Estimator, which takes a full-length demonstration as context and provides superior value estimation on in- and out-of-domain tasks relative to current foundation
+    value-estimation approaches.
+
+    \item A rigorous evaluation of \method, an ablation of its design elements, and a comparison against state-of-the-art in-context learning methods on a real bimanual manipulator trained on \NumTrainHours{} hours
+    across \NumTasks{} tasks of teleoperated data.
+\end{enumerate}
+
+\section{Related Work}
+\label{sec:related-work}
+
+\paragraph{In-context learning for embodied agents.} Prior work has explored injecting in-context adaptability into VLAs by retrieving and placing demonstration segments directly in a policy's context window~\cite{ricl}, learning single-demonstration ICL for non-VLA policies via next-token prediction~\cite{icrt}, and performing in-context imitation learning with explicit visual reasoning~\cite{iclr}. 
+Other work approaches ICL from unstructured human play data~\cite{mimicdroid}, studies how retrieved action consequences shown in-context help VLAs generalize~\cite{reflectivevla}, or replaces sequence-conditioned retrieval with explicit point-correspondence matching between a single demonstration and the current scene~\cite{matchingpolicy}. 
+A parallel line of work scales context implicitly rather than by retrieval, compressing long interaction histories into online-updated fast weights via test-time training~\cite{robottt}; \method instead keeps policy parameters fixed at test time and relies entirely on what is retrieved into the context window.
+\method builds most directly on the retrieval-augmented formulation of RICL~\cite{ricl}, extending its visual-similarity-only retrieval signal with an in-context value estimate.
+
+\paragraph{Value and reward modeling for VLAs.} A growing body of work trains
+general-purpose value/reward models for robot manipulation, including
+stage-aware reward modeling~\cite{sarm} and other VLM-backboned value
+estimators~\cite{robometer,topreward}. RECAP~\cite{pi06} shows that a
+distributional value function trained on episode-level success labels can
+drive advantage-conditioned policy improvement at scale; our IC-VFE adopts a
+similar distributional value-bin formulation
+(Section~\ref{sec:ic-vfe-architecture}) but conditions the prediction on an
+in-context demonstration rather than the query observation alone. Closest in
+spirit is VITA~\cite{vita}, which also targets out-of-domain value
+calibration but does so by taking online gradient steps on a
+self-supervised loss at test time; the IC-VFE instead performs this
+calibration entirely through attention over an in-context demonstration,
+requiring no test-time parameter updates.
+Advantage-Weighted Flow Matching~\cite{awfm} similarly uses value annotations
+to bias flow-matching-based policy training toward high-reward behavior.
+
+\paragraph{Retrieval in robot learning.} Beyond ICL specifically, retrieval
+has been used to augment behavior-cloning policies with relevant
+offline data~\cite{mimicgen}, and dedicated retrieval-augmented VLA
+architectures have been proposed for general manipulation~\cite{retrievalvla}.
+LEACL explores LLM-enhanced automatic curriculum construction for robot
+learning~\cite{leacl}. \method differs from this line of work in retrieving
+based on a learned, task-progress-aware signal rather than similarity alone.
+
+\input{methodology.tex}
+
+\input{experiments.tex}
+
+
+\section{Limitations and Future Work}
+\label{sec:limitations}
+
+\method's evaluation protocol has several known limitations. Success and
+failure are judged against a fixed per-task rubric without inter-rater
+agreement statistics, and no multiple-seed reruns are performed per
+configuration (Appendix~\ref{app:eval-metrics}). Composition and confounding
+generalization are currently evaluated only on the 3 long-horizon and 9
+same-skill task pairs in Table~\ref{tab:task-pairs}, respectively; broader
+coverage would strengthen the generalization claims in
+Section~\ref{sec:intro}.
+
+The bi-level design also introduces an unmeasured compounding-error risk: an
+inaccurate IC-VFE estimate $\hat v_t$ can steer retrieval toward a
+mismatched context chunk, degrading policy performance independent of the
+policy's own quality. Section~\ref{sec:vfe-results} reports IC-VFE accuracy
+in isolation; an ablation measuring downstream policy sensitivity to VFE
+error would clarify this failure mode.
+
+Future work includes supervised fine-tuning on top of RL100-style data
+collection, training the retrieval fusion $g_\psi$
+(Section~\ref{sec:context-retrieval}) jointly with the IC-VLA rather than the
+fixed fusion used by all reported real-robot runs, extending \method's
+context beyond the single retrieved chunk ($k=1$) those same runs use -- a
+memory-bound constraint of the current implementation, not a limit of the
+formalism in Section~\ref{sec:context-retrieval} -- toward multi-neighbor and
+longer-horizon composed retrieval, and evaluating \method's robustness on a
+common simulation benchmark such as CALVIN as a further check beyond the
+real-world evaluation. \method is currently training-free at test
+time by design, relying entirely on retrieval into a fixed-parameter
+context window; recent theoretical and empirical work shows that pairing
+in-context learning with lightweight test-time training can further reduce
+the number of demonstrations needed to reach a target accuracy, both in
+general transformer ICL settings~\cite{ttt-icl-provably,ttt-fewshot} and,
+concretely, in VLA policies via fast-weight context
+scaling~\cite{robottt} and test-time-trained visual
+foresight~\cite{ttt-visual-foresight}. A natural extension of \method is to
+let the retrieved context also drive a small number of test-time gradient
+steps on the IC-VFE or the policy itself, rather than treating retrieval and
+inference as fully separate stages.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+\gap{write after Results and Analysis are finalized with real numbers.} This
+work presents \method, a bi-level in-context learning method that pairs an
+In-Context Value Function Estimator with value- and vision-aware retrieval to
+adapt a pretrained VLA to new tasks from as few as one to ten demonstrations,
+without task-specific fine-tuning. We evaluate \method against a RICL
+baseline on a real bimanual manipulator across in-domain,
+novel-object, and long-horizon composition tasks.
+
+\section*{Acknowledgment}
+\gap{fill in acknowledgments once finalized.}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+% \gap{references.bib does not yet exist in this directory and needs entries
+% for at least the following keys used across this file, methodology.tex, and
+% experiments.tex: pi05, pi06, ricl, dinov2, icrt, iclr, grrl, mimicdroid,
+% mimicgen, retrievalvla, reflectivevla, sarm, topreward, robometer, awfm,
+% leacl, progvla, libero, yor.}
+
+% \clearpage
+% \input{appendix.tex}
+
+\end{document}
+ 

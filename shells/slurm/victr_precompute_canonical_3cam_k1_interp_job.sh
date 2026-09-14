@@ -19,7 +19,17 @@
 # neighbors, ~=0.30 at the median, ~=0.05 for the farthest).
 #
 # Sharding/time budget mirrors victr_precompute_canonical_3cam_k1_job.sh (single
-# metric here, so if anything this finishes faster).
+# metric here, so if anything this finishes faster), EXCEPT --balance-episodes-
+# across-shards is passed here: with 20 tasks / 20 shards, whole-task-per-shard
+# assignment (_assign_tasks_to_shards) lets one big task (e.g. 100 episodes vs.
+# other tasks' 48-50) become a straggler shard while the rest sit idle.
+# _split_pairs_into_shards instead greedy-fills episodes across shards directly,
+# splitting large tasks across multiple shards when needed -- verified this gives
+# 59-60 episodes/shard (vs. 48-100 before) with zero episodes lost or duplicated.
+# Only safe here because these pools are small (<=5.1GB/task): a task split across
+# N shards means N processes each load their own full copy of that task's pool,
+# which is a real OOM risk for the 36GB expanded-task-set pools -- do not copy this
+# flag onto a precompute job pointed at victr_icl_pool_expanded_224/.
 #
 # Submit:
 #   sbatch --account=<account> shells/slurm/victr_precompute_canonical_3cam_k1_interp_job.sh <repo_dir>
@@ -86,6 +96,7 @@ for ((i = 0; i < NSHARDS; i++)); do
         --action-norm-stats-json "$NORM_STATS_JSON" \
         --use-continuous-action-interpolation \
         --lamda "$LAMDA" \
+        --balance-episodes-across-shards \
         --num-shards "$NSHARDS" --shard-index "$i" \
         > "logs/precompute-canonical-3cam-k1-interp-${METRIC}-${SLURM_JOB_ID}-shard${i}.out" 2>&1 &
     pids+=($!)
