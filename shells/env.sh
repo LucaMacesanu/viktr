@@ -18,10 +18,3 @@ if [ ! -x "$PY" ]; then
     echo "openpi venv not found at $OPENPI_DIR/.venv -- run: (cd third_party/openpi && GIT_LFS_SKIP_SMUDGE=1 uv sync)" >&2
     exit 1
 fi
-
-# torchcodec needs FFmpeg 7 shared libraries. If the system doesn't provide them,
-# expose the copies bundled inside PyAV's wheel (see setup_ffmpeg7_shim.sh).
-if ! ldconfig -p 2>/dev/null | grep -q "libavutil.so.59"; then
-    "$REPO_ROOT/shells/setup_ffmpeg7_shim.sh" "$REPO_ROOT" >/dev/null
-    export LD_LIBRARY_PATH="$OPENPI_DIR/ffmpeg7_shim:$OPENPI_DIR/.venv/lib/python3.12/site-packages/av.libs:${LD_LIBRARY_PATH:-}"
-fi

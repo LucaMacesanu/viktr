@@ -36,9 +36,9 @@ cd ../..
 ```
 
 All steps below use the openpi environment (`third_party/openpi/.venv`). The scripts
-in `shells/` find it automatically. Video decoding uses torchcodec, which needs the
-FFmpeg 7 shared libraries; if your system doesn't provide them, `shells/env.sh`
-automatically uses the copies bundled with PyAV.
+in `shells/` find it automatically. For fast video decoding, install FFmpeg 4–7
+(e.g. `apt install ffmpeg` or `conda install ffmpeg`); without it, LeRobot falls back
+to the slower PyAV decoder.
 
 ## Training configs
 
