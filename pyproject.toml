@@ -4,27 +4,11 @@ version = "0.1.0"
 description = "VICTR: Value-Informed Context Retrieval for Vision-Language-Action Models"
 readme = "README.md"
 requires-python = ">=3.12"
+# Data-preparation utilities only (retrieval-pool construction, DINOv2 embeddings).
+# Training runs in third_party/openpi's own environment -- see README.md.
 dependencies = [
-    # `libero` extra dropped on this HPC checkout: it pulls in robomimic ->
-    # egl-probe, which needs to compile against EGL/Mesa dev headers that
-    # aren't installed here (no sudo, no module provides them) -- `cmake ..;
-    # make -j` fails in egl-probe's build_ext regardless of cmake itself
-    # being present. Not needed for VictrPolicy training on icl-dataset
-    # (data/libero.py, eval_libero_victr.py, and the LIBERO smoke tests are
-    # unusable until this is resolved, e.g. by finding an EGL-headers module
-    # or building against a different backend).
-    "lerobot[robometer]>=0.6.1",
-    # `dataset` extra (pandas/pyarrow/datasets): needed by viktr.data.icl_dataset
-    # to read icl-dataset's meta/episodes/*.parquet shards. Not pulled in by
-    # `robometer` transitively.
-    "lerobot[dataset]>=0.6.1",
-    # scripts/train_victr.py logs to wandb (--wandb, baked into
-    # shells/slurm/victr_train_job.sh); not pulled in transitively by any lerobot extra.
-    "wandb>=0.18",
-    # lerobot.scripts.lerobot_train_tokenizer.train_fast_tokenizer (used by
-    # scripts/fit_expanded_fast_tokenizer.py) loads the "lerobot/fast-action-tokenizer"
-    # remote-code processor, whose modeling file imports scipy; not pulled in
-    # transitively by any lerobot extra above.
+    # `dataset` extra: pandas/pyarrow/datasets, for reading icl-dataset's meta parquet shards.
+    "lerobot[dataset]",
     "scipy>=1.11",
 ]
 
@@ -36,4 +20,5 @@ build-backend = "hatchling.build"
 packages = ["src/viktr"]
 
 [tool.uv.sources]
-lerobot = { path = "third_party/lerobot", editable = true }
+# Same lerobot commit (v0.6.1) the paper's data preparation was run with.
+lerobot = { git = "https://github.com/huggingface/lerobot.git", rev = "7e241bd" }

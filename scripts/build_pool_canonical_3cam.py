@@ -17,7 +17,7 @@ doesn't have yet:
    "matching action_horizon, not the pool's 10-step chunking"), frequency-
    truncated (zero DCT bins >= 20 of 30, chosen cutoff per Sec 7), and
    FAST-tokenized through the exact fitted tokenizer
-   (nyu-finger-robot/outputs/fast_tokenizer/yor-icl-canonical) training will
+   (third_party/openpi/assets/fast_tokenizer/yor-icl-canonical) training will
    use -- baked in now so a future build_context_block rewrite is an O(1)
    array read, not a live DCT+BPE call per sample.
 
@@ -44,6 +44,7 @@ from __future__ import annotations
 import gc
 import pathlib
 import pickle
+import os
 import sys
 import time
 
@@ -51,17 +52,20 @@ import numpy as np
 import torch
 from scipy.fft import dct, idct
 
-sys.path.insert(0, "/scratch/lim2045/icl_ws/viktr/third_party/openpi/src")
+_OPENPI = pathlib.Path(__file__).resolve().parents[1] / "third_party" / "openpi"
+sys.path.insert(0, str(_OPENPI / "src"))
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 
 from openpi.models import tokenizer as _tokenizer  # noqa: E402
 from openpi.policies import yor_rotation  # noqa: E402
 from openpi.shared.image_tools import resize_with_pad_torch  # noqa: E402
 
-ROOT = "/scratch/lim2045/icl_ws/icl-dataset-fixed-obs"
-SRC_POOL_DIR = pathlib.Path("/scratch/lim2045/icl_ws/viktr/third_party/openpi/assets/victr_icl_pool_canonical_224")
-DST_POOL_DIR = pathlib.Path("/scratch/lim2045/icl_ws/viktr/third_party/openpi/assets/victr_icl_pool_canonical_3cam_224")
-FAST_TOKENIZER_PATH = "/scratch/lim2045/icl_ws/viktr/third_party/nyu-finger-robot/outputs/fast_tokenizer/yor-icl-canonical"
+ROOT = os.environ.get("VICTR_DATA_ROOT", str(_OPENPI / "data" / "icl-dataset-fixed-obs"))
+SRC_POOL_DIR = _OPENPI / "assets" / "victr_icl_pool_canonical_224"
+DST_POOL_DIR = _OPENPI / "assets" / "victr_icl_pool_canonical_3cam_224"
+FAST_TOKENIZER_PATH = os.environ.get(
+    "VICTR_FAST_TOKENIZER", str(_OPENPI / "assets" / "fast_tokenizer" / "yor-icl-canonical")
+)
 
 CAMERAS = ["observation.images.zed", "observation.images.fish0", "observation.images.fish1"]
 ACTION_HORIZON = 30

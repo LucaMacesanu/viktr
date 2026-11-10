@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import random
 import re
 from pathlib import Path
@@ -37,7 +38,9 @@ import pandas as pd
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 DEFAULT_REPO_ID = "icl-dataset"
-DEFAULT_ROOT = Path("/scratch/lim2045/icl_ws/icl-dataset")
+DEFAULT_ROOT = Path(
+    os.environ.get("VICTR_DATA_ROOT", Path(__file__).resolve().parents[3] / "third_party/openpi/data/icl-dataset-fixed-obs")
+)
 
 # The 4-task left-arm pnp subset this whole VICTR-on-icl-dataset experiment is
 # scoped to (matches nyu-finger-robot/configs/yor-pi05-ablation-*.yaml's

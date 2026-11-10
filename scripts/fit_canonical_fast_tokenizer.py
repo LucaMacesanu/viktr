@@ -29,20 +29,23 @@ action-only, same pattern already used by patch_pool_canonical.py this session).
 
 Usage (from the viktr repo root, via openpi's venv):
     third_party/openpi/.venv/bin/python3 scripts/fit_canonical_fast_tokenizer.py \
-        --output-dir third_party/nyu-finger-robot/outputs/fast_tokenizer/yor-icl-canonical
+        --output-dir third_party/openpi/assets/fast_tokenizer/yor-icl-canonical
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, "/scratch/lim2045/icl_ws/viktr/third_party/openpi/src")
+_REPO = Path(__file__).resolve().parents[1]
+_OPENPI = _REPO / "third_party" / "openpi"
+sys.path.insert(0, str(_OPENPI / "src"))
 from openpi.policies import yor_rotation  # noqa: E402
 
 from lerobot.configs import NormalizationMode  # noqa: E402
@@ -52,11 +55,9 @@ from lerobot.scripts.lerobot_train_tokenizer import (  # noqa: E402
     train_fast_tokenizer,
 )
 
-ROOT = Path("/scratch/lim2045/icl_ws/icl-dataset-fixed-obs")
-EPISODES_PATH = Path("/scratch/lim2045/icl_ws/viktr/third_party/openpi/assets/yor_icl_canonical_extended_episodes.json")
-NORM_STATS_PATH = Path(
-    "/scratch/lim2045/icl_ws/viktr/third_party/openpi/assets/yor_icl_pi05_canonical_extended/icl-dataset/norm_stats.json"
-)
+ROOT = Path(os.environ.get("VICTR_DATA_ROOT", _OPENPI / "data" / "icl-dataset-fixed-obs"))
+EPISODES_PATH = _OPENPI / "assets" / "yor_icl_canonical_extended_episodes.json"
+NORM_STATS_PATH = _OPENPI / "assets" / "yor_icl_pi05_canonical_extended" / "icl-dataset" / "norm_stats.json"
 
 _LEFT_QUAT, _LEFT_POS = slice(0, 4), slice(4, 7)
 _RIGHT_QUAT, _RIGHT_POS = slice(7, 11), slice(11, 14)

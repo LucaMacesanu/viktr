@@ -1,56 +1,135 @@
 # VICTR
 
-VICTR (Value-Informed Context Retrieval) is a bi-level in-context-learning
-policy for VLAs: retrieve a demonstration context chunk using a fused
-visual-similarity + value-alignment score, then feed that chunk into a
-context-conditioned VLA policy (IC-VLA) that predicts the next action
-chunk — no fine-tuning at deployment. It extends RICL (vision-only
-retrieval) with an in-context value signal.
+VICTR (Value-Informed Context Retrieval) is an in-context-learning policy for
+vision-language-action models. For every observation it retrieves a demonstration
+chunk from a pool, using a score that fuses DINOv2 visual similarity with a progress
+value estimate, and feeds that chunk (3 camera views + a tokenized state/action
+summary) into a context-conditioned π0.5 policy that predicts the next action chunk.
 
-Built on lerobot's native PyTorch `pi05` (π0.5) as the IC-VLA base, and
-Robometer as the value estimator. See `notes/progress.md` for the full
-design-decision log, milestones, and what's built so far; `notes/hpc.md` for
-running this on a cluster.
+This repository contains the training code used for the paper. Models and training
+live in a fork of [openpi](https://github.com/Physical-Intelligence/openpi)
+(`third_party/openpi`, JAX); this top-level repo holds the scripts that drive it plus
+the data-preparation utilities used to build the retrieval pools.
 
 ## Layout
 
-- `src/viktr/retrieval/` — chunk dictionary construction, DINOv2 embeddings,
-  the three retrieval metrics (vision / value / vision+value fusion).
-- `src/viktr/value/` — `ValueEstimator` interface and the Robometer wrapper.
-- `src/viktr/policy/` — `VictrPolicy`, a context-chunk-conditioned subclass
-  of lerobot's `pi05`.
-- `src/viktr/data/` — `lerobot/libero` dataset adapter.
-- `scripts/` — Python entrypoints (smoke tests, LIBERO eval harness).
-- `shells/` — `.sh` wrappers around `scripts/*.py` for local/HPC runs, plus
-  SLURM job templates under `shells/slurm/`. See `shells/README.md`.
-- `third_party/` — `lerobot` (editable submodule, modified for context
-  conditioning) and `ricl_openpi` (reference only).
+| Path | Contents |
+|---|---|
+| `third_party/openpi/src/openpi/models/pi0_victr.py` | π0.5 + retrieved-context conditioning (VICTR) |
+| `third_party/openpi/src/openpi/models/pi0_fast_victr.py` | π0-FAST + retrieved context, with RICL-style action interpolation |
+| `third_party/openpi/src/openpi/policies/yor_retrieval.py` | retrieval (vision / value / vision+value) and context construction |
+| `third_party/openpi/src/openpi/policies/yor_policy.py` | dataset ↔ model transforms (canonical pos + rot6d state/action space) |
+| `third_party/openpi/src/openpi/training/config.py` | training configs (see below) |
+| `third_party/openpi/scripts/precompute_retrieval_context.py` | offline retrieval for every training frame |
+| `shells/` | entry points: `download_data.sh`, `precompute_context.sh`, `train.sh` |
+| `scripts/`, `src/viktr/` | retrieval-pool construction (DINOv2 embeddings, chunk dictionaries, FAST tokenizer fit) |
 
 ## Setup
 
-```bash
-git clone --recurse-submodules <repo-url> viktr   # or: git submodule update --init --recursive
-uv sync
-```
-
-Requires Python 3.12 (`.python-version`) and a CUDA GPU for anything beyond
-the cheapest smoke tests (`pi05` is a 2B+300M-param model).
-
-## Running things
+Requirements: Linux x86_64, NVIDIA GPU(s) with CUDA 12, [uv](https://docs.astral.sh/uv/).
 
 ```bash
-shells/smoke_chunk_retrieval.sh     # retrieval sanity check, no GPU-heavy models
-shells/smoke_victr_policy.sh        # loads real pi05_base weights, checks context conditioning
-shells/eval_libero.sh --suite libero_object --task-ids 0 --n-episodes 2 \
-    --retrieval-metrics vision,none
+git clone --recurse-submodules <repo-url> victr
+cd victr/third_party/openpi
+GIT_LFS_SKIP_SMUDGE=1 uv sync
+cd ../..
 ```
 
-See `shells/README.md` for the full wrapper list, and `notes/hpc.md` for
-SLURM submission.
+All steps below use the openpi environment (`third_party/openpi/.venv`). The scripts
+in `shells/` find it automatically. Video decoding uses torchcodec, which needs the
+FFmpeg 7 shared libraries; if your system doesn't provide them, `shells/env.sh`
+automatically uses the copies bundled with PyAV.
 
-## Status
+## Training configs
 
-MVP retrieval + context-conditioned policy + LIBERO closed-loop eval harness
-are built and verified end-to-end (zero-shot, not yet fine-tuned — see
-`notes/progress.md`'s "What's next" for the training loop that's still
-needed before eval success rates are meaningful).
+| Config | Model | Retrieval | Init from |
+|---|---|---|---|
+| `yor_icl_pi05_canonical_extended` | π0.5 | – | `pi05_base` (**stage 1**) |
+| `yor_icl_pi05_canonical_warmstart_baseline` | π0.5 | – | stage 1, step 40k |
+| `yor_icl_victr_vision_canonical_ctx3cam` | VICTR (π0.5) | vision | stage 1, step 40k |
+| `yor_icl_victr_value_canonical_ctx3cam` | VICTR (π0.5) | value | stage 1, step 40k |
+| `yor_icl_victr_vision_value_canonical_ctx3cam` | VICTR (π0.5) | vision + value | stage 1, step 40k |
+| `yor_icl_victr_vision_interp_canonical_ctx3cam` | VICTR (π0.5) + action interpolation (RICL-style) | vision | stage 1, step 40k |
+| `yor_icl_pi0_fast_canonical` | π0-FAST | – | `pi0_fast_base` |
+| `yor_icl_fast_victr_vision_interp_canonical` | π0-FAST + context + action interpolation (RICL) | vision | `pi0_fast_base` |
+
+All configs train on the same 20-task, 1,186-episode bimanual set
+(`third_party/openpi/assets/yor_icl_canonical_extended_episodes.json`) and share one
+set of normalization statistics (`.../assets/yor_icl_pi05_canonical_extended/`), both
+committed to the repo.
+
+## Pipeline
+
+### 1. Download data and assets
+
+```bash
+shells/download_data.sh            # dataset, FAST tokenizer, 3-camera retrieval pool
+shells/download_data.sh --fast     # + single-camera pool (only for yor_icl_fast_victr_vision_interp_canonical)
+shells/download_data.sh --stage1   # + stage-1 checkpoint, to skip step 3
+```
+
+By default, data is placed under `third_party/openpi/data/` and
+`third_party/openpi/assets/`. To use other locations, set `VICTR_DATA_ROOT`,
+`VICTR_FAST_TOKENIZER`, `VICTR_RETRIEVAL_CONTEXT_DIR` and `VICTR_WARMSTART_PARAMS`
+(read by both the shell scripts and `config.py`).
+
+### 2. Precompute retrieval context (VICTR configs only)
+
+Retrieval is run offline once per training frame, so the dataloader does an array
+lookup instead of a live DINOv2 embedding + nearest-neighbour search.
+
+```bash
+shells/precompute_context.sh ctx3cam vision         # yor_icl_victr_vision_canonical_ctx3cam
+shells/precompute_context.sh ctx3cam value          # yor_icl_victr_value_canonical_ctx3cam
+shells/precompute_context.sh ctx3cam vision_value   # yor_icl_victr_vision_value_canonical_ctx3cam
+shells/precompute_context.sh ctx3cam_interp         # yor_icl_victr_vision_interp_canonical_ctx3cam
+shells/precompute_context.sh fast_interp            # yor_icl_fast_victr_vision_interp_canonical
+```
+
+`NUM_SHARDS` (default 4) sets the number of parallel worker processes. Each worker
+holds one task's retrieval pool in RAM, so lower it if you run out of host memory.
+The precompute can be restarted: episodes that are already done are skipped.
+
+### 3. Stage 1: π0.5 fine-tune
+
+```bash
+shells/train.sh yor_icl_pi05_canonical_extended stage1
+```
+
+The VICTR configs and the warm-start baseline initialize from this run's step-40000
+checkpoint (`third_party/openpi/checkpoints/yor_icl_pi05_canonical_extended/stage1/40000/params`).
+Skip this step if you downloaded it with `--stage1`.
+
+### 4. Train VICTR and baselines
+
+```bash
+shells/train.sh yor_icl_victr_vision_value_canonical_ctx3cam main
+shells/train.sh yor_icl_pi05_canonical_warmstart_baseline main
+# ... any config from the table above
+```
+
+Pass `--resume` to continue an interrupted run, or `--overwrite` to restart one.
+Any other `scripts/train.py` flag can be appended, e.g. `--batch-size 64` or
+`--no-wandb-enabled`.
+
+### Hardware
+
+The paper's runs used 2× H200 (141 GB) per run, with a global batch size of 256 (64 for
+`yor_icl_fast_victr_vision_interp_canonical`). openpi shards the batch across every
+visible GPU. On smaller GPUs, reduce `--batch-size`. Note that this changes the
+optimization relative to the paper (openpi has no gradient accumulation), and the
+learning-rate schedules in `config.py` were tuned for the original batch sizes.
+
+## Rebuilding the retrieval pools (optional)
+
+The pools downloaded in step 1 were built with `scripts/build_retrieval_pool.py`
+(DINOv2 chunk embeddings + RoboDopamine progress values),
+`scripts/fit_canonical_fast_tokenizer.py`, and `scripts/build_pool_canonical_3cam.py`
+(adds all three camera views and pre-tokenized 30-step action windows). These scripts
+run in the top-level environment (`uv sync` at the repo root).
+
+## Acknowledgements
+
+Built on [openpi](https://github.com/Physical-Intelligence/openpi) (Apache-2.0) and
+[LeRobot](https://github.com/huggingface/lerobot). Action interpolation follows
+[RICL](https://arxiv.org/abs/2508.02062).
