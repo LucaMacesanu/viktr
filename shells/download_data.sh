@@ -6,9 +6,8 @@
 #   shells/download_data.sh --stage1   # also the stage-1 checkpoint (skip training stage 1)
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
-# TODO(release): set these to the published Hub repos.
-DATASET_REPO="${VICTR_HF_DATASET_REPO:-TODO/icl-dataset-fixed-obs}"
-ASSETS_REPO="${VICTR_HF_ASSETS_REPO:-TODO/victr-assets}"
+DATASET_REPO="${VICTR_HF_DATASET_REPO:-lair-nyu/victr-icl-dataset}"
+ASSETS_REPO="${VICTR_HF_ASSETS_REPO:-lair-nyu/victr-assets}"
 
 includes=(--include "fast_tokenizer/*" --include "victr_icl_pool_canonical_3cam_224/*")
 for arg in "$@"; do
@@ -19,7 +18,7 @@ for arg in "$@"; do
     esac
 done
 
-HF="$OPENPI_DIR/.venv/bin/huggingface-cli"
+HF="$OPENPI_DIR/.venv/bin/hf"
 "$HF" download "$DATASET_REPO" --repo-type dataset --local-dir "$VICTR_DATA_ROOT"
 "$HF" download "$ASSETS_REPO" "${includes[@]}" --local-dir "$OPENPI_DIR/assets"
 if [ -d "$OPENPI_DIR/assets/checkpoints" ]; then

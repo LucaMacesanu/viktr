@@ -1,5 +1,10 @@
 # VICTR
 
+[Paper](https://arxiv.org/pdf/2611.08698v1) ·
+[Hugging Face collection](https://huggingface.co/collections/ai4ce/victr-value-informed-in-context-learning-for-vlas-6af362deff10640a6be06b31) ·
+[Dataset](https://huggingface.co/datasets/lair-nyu/victr-icl-dataset) ·
+[Training assets](https://huggingface.co/lair-nyu/victr-assets)
+
 VICTR (Value-Informed Context Retrieval) is an in-context-learning policy for
 vision-language-action models. For every observation it retrieves a demonstration
 chunk from a pool, using a score that fuses DINOv2 visual similarity with a progress
@@ -63,9 +68,9 @@ committed to the repo.
 ### 1. Download data and assets
 
 ```bash
-shells/download_data.sh            # dataset, FAST tokenizer, 3-camera retrieval pool
-shells/download_data.sh --fast     # + single-camera pool (only for yor_icl_fast_victr_vision_interp_canonical)
-shells/download_data.sh --stage1   # + stage-1 checkpoint, to skip step 3
+shells/download_data.sh            # dataset (~16 GB), FAST tokenizer, 3-camera retrieval pool (42 GB)
+shells/download_data.sh --fast     # + single-camera pool, 15 GB (only for yor_icl_fast_victr_vision_interp_canonical)
+shells/download_data.sh --stage1   # + stage-1 checkpoint (12 GB), to skip step 3
 ```
 
 By default, data is placed under `third_party/openpi/data/` and
